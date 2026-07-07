@@ -118,7 +118,8 @@ def test_query_khong_token_tra_rong(env):
 
 
 def test_unpublish_bien_mat(env):
-    """Bài re-index với status=unpublished biến mất khỏi mọi kết quả (F-08)."""
+    """F-08: bài status=unpublished KHÔNG hiển thị trong public search (lọc theo
+    status), và DELETE mới gỡ hẳn khỏi mọi chỉ mục."""
     manager, pipeline = env
     before = _ids(pipeline.search(SearchQuery(text="giá vàng", top_k=10, now=NOW)))
     assert "eco-gold-01" in before
@@ -131,8 +132,15 @@ def test_unpublish_bien_mat(env):
         "published_at": "2026-07-07T09:05:00+07:00",
         "status": "unpublished",
     })
+    # Public search (mặc định lọc status=published) không còn thấy bài
     after = _ids(pipeline.search(SearchQuery(text="giá vàng", top_k=10, now=NOW)))
     assert "eco-gold-01" not in after
+    # Thiết kế lọc-theo-status: bài vẫn nằm trong chỉ mục với status=unpublished
+    art = manager.store.get("eco-gold-01")
+    assert art is not None and art.status == "unpublished"
+
+    # DELETE mới thực sự gỡ khỏi MỌI chỉ mục
+    manager.remove_article("eco-gold-01")
     assert manager.store.get("eco-gold-01") is None
     assert "eco-gold-01" not in manager.lexical
     assert manager.vector.get("eco-gold-01") is None

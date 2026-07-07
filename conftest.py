@@ -14,3 +14,12 @@ os.environ["RERANKER"] = "none"
 os.environ["SOURCE"] = "sample"
 os.environ["TOKENIZER"] = "regex"          # tách từ deterministic (không phụ thuộc pyvi)
 os.environ["DEDUP_BACKEND"] = "local"      # dedup thuần Python (deterministic)
+
+# Ép TẮT mọi tính năng phụ để test default-off hermetic (không phụ thuộc .env của
+# máy dev). Test cần bật thì truyền Settings(...) tường minh (override env).
+for _flag in (
+    "QU_SPELLCORRECT", "QU_EXPANSION", "QU_LLM_REWRITE",
+    "CACHE_ENABLED", "FEEDBACK_ENABLED", "EXPERIMENT_ENABLED", "AUTOLOAD_SAMPLE",
+):
+    os.environ[_flag] = "false"
+os.environ["ADMIN_TOKEN"] = ""
