@@ -118,6 +118,28 @@ python -m venv .venv
 .venv\Scripts\python.exe -m uvicorn news_search.api.app:app --port 8000
 ```
 
+## Docker & Demo UI
+
+Chạy demo tương tác **offline, tức thì** (image nhẹ — chỉ core deps, KHÔNG torch/model):
+
+```bash
+docker compose up --build          # -> mở http://localhost:8000
+# Tùy chọn có Redis (cache/feedback dùng chung):
+CACHE_BACKEND=redis FEEDBACK_BACKEND=redis docker compose --profile full up --build
+```
+
+Container tự chạy backend `local/hash`, **tự nạp bài mẫu** (`AUTOLOAD_SAMPLE`), bật
+feedback + cache + metrics + UI. Không cần tải model hay dịch vụ ngoài.
+
+**Demo UI** ([news_search/api/ui.html](news_search/api/ui.html)) tại `GET /` (hoặc `/ui`):
+tìm kiếm (chọn mode + lọc chuyên mục/tác giả/thời gian), xem kết quả có highlight,
+**click được ghi log** (feedback → CTR), thêm bài viết, reindex, và **chỉ số trực
+tiếp** (số bài, latency p95, cache-hit, CTR) tự làm mới. Trang render an toàn XSS
+(escape + chỉ cho phép `<b>` của snippet). Tắt bằng `UI_ENABLED=false`.
+
+Chạy UI không cần Docker: `uvicorn news_search.api.app:app --port 8000` (đặt
+`AUTOLOAD_SAMPLE=true SOURCE=sample` để có sẵn dữ liệu) rồi mở `http://localhost:8000`.
+
 ### API
 
 | Method & path | Mô tả |
@@ -126,7 +148,12 @@ python -m venv .venv
 | `POST /articles/bulk` | Nạp một lô bài |
 | `DELETE /articles/{id}` | Gỡ bài khỏi mọi chỉ mục (F-08) |
 | `GET /articles/{id}/entities` | Thực thể của bài (F-06) |
-| `GET /search?q=&mode=&top_k=&author=&category=&source=&date_from=&date_to=` | Trả JSON array, mỗi phần tử ĐÚNG 5 trường. `q` rỗng → 400 |
+| `GET /search?q=&mode=&top_k=&author=&category=&source=&date_from=&date_to=` | Trả JSON array, mỗi phần tử ĐÚNG 5 trường. `q` rỗng → 400. Header `X-Search-Id` khi bật feedback |
+| `POST /events/click` | Log click/dwell (GĐ1) — `{search_id, article_id, position, dwell_ms?}` |
+| `GET /stats` | JSON tổng hợp cho UI: counts + backends + features + metrics + CTR |
+| `GET /metrics` · `GET /dashboard` | Prometheus text · dashboard HTML (GĐ5) |
+| `POST /admin/reindex` | Reindex blue-green (header `X-Admin-Token`) |
+| `GET /` · `GET /ui` | **Demo UI** tương tác (`UI_ENABLED`) |
 | `GET /healthz` | Sức khỏe + số lượng đã index |
 
 Ví dụ:
@@ -144,12 +171,20 @@ curl "http://localhost:8000/search?q=giá%20xăng&category=Kinh%20tế"
 Chọn backend qua biến môi trường (xem [.env.example](.env.example)). Mặc định là
 `local`/`hash`/`none` (offline). Chuyển production:
 
-| Biến | Local (mặc định) | Production |
+| Biến | Local / Dev | Production (khuyến nghị) |
 |---|---|---|
 | `LEXICAL_BACKEND` | `local` (BM25 thuần Python) | `opensearch` |
 | `VECTOR_BACKEND` | `local` (brute-force cosine) | `milvus` (chỉ mục **HNSW**) |
-| `EMBEDDER` | `hash` (char n-gram offline) | `bge` (BGE-m3 local) hoặc `openai` (`text-embedding-3-large`) |
-| `RERANKER` | `none` | `bge` (`BAAI/bge-reranker-v2-m3`) |
+| `EMBEDDER` | `hash` (offline, deterministic) | **`vi`** (`AITeamVN/Vietnamese_Embedding` — VN chuyên biệt, **mặc định**) · `bge` · `openai` |
+| `RERANKER` | `none` | **`vi`** (`AITeamVN/Vietnamese_Reranker`) · `bge` |
+| `TOKENIZER` | `regex` (test) | **`auto`** → `pyvi` (tách từ ghép "bất_động_sản") |
+| `DEDUP_BACKEND` | `local` (thuần Python) | `datasketch` (nhanh hơn ở quy mô) |
+
+> **Nâng cấp tiếng Việt chuyên biệt** ([embeddings.py](news_search/index/embeddings.py) `VietnameseEmbedder`,
+> [rerank.py](news_search/search/rerank.py) `VietnameseReranker`): mô hình fine-tune từ
+> BGE-m3 cho tiếng Việt → chất lượng semantic + top-k cao hơn bge gốc, **cùng hạ tầng**.
+> `pip install -e ".[vi,dedup]"` rồi đặt `EMBEDDER=vi RERANKER=vi TOKENIZER=auto DEDUP_BACKEND=datasketch`.
+> Model tải lần đầu (~2.6GB); bật GPU `BGE_DEVICE=cuda` cho index lô lớn.
 
 Cài thêm khi cần: bỏ comment các dòng tương ứng trong
 [requirements.txt](requirements.txt) (`opensearch-py`, `pymilvus`, `openai`,

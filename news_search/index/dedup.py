@@ -173,3 +173,32 @@ class MinHashDeduper:
 
     def __len__(self) -> int:
         return len(self._signatures)
+
+
+def get_deduper(settings):
+    """Factory chọn backend dedup theo ``settings.dedup_backend``.
+
+    - ``"local"``      -> :class:`MinHashDeduper` (thuần Python, deterministic)
+    - ``"datasketch"`` -> ``DatasketchDeduper`` (tối ưu, nhanh hơn ở quy mô);
+      thiếu package -> cảnh báo + degrade về local.
+    - khác             -> ``ValueError``
+    """
+    kwargs = dict(
+        num_perm=settings.dedup_num_perm,
+        threshold=settings.dedup_threshold,
+        shingle_size=settings.dedup_shingle_size,
+    )
+    backend = settings.dedup_backend
+    if backend == "local":
+        return MinHashDeduper(**kwargs)
+    if backend == "datasketch":
+        try:
+            from news_search.index.dedup_datasketch import DatasketchDeduper
+
+            return DatasketchDeduper(**kwargs)
+        except RuntimeError as exc:  # thiếu datasketch -> degrade an toàn
+            import warnings
+
+            warnings.warn(f"{exc}; dùng dedup local thay thế.")
+            return MinHashDeduper(**kwargs)
+    raise ValueError(f"Dedup backend không hỗ trợ: {backend!r}")

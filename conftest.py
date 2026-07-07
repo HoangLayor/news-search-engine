@@ -12,3 +12,5 @@ os.environ["LEXICAL_BACKEND"] = "local"
 os.environ["EMBEDDER"] = "hash"
 os.environ["RERANKER"] = "none"
 os.environ["SOURCE"] = "sample"
+os.environ["TOKENIZER"] = "regex"          # tách từ deterministic (không phụ thuộc pyvi)
+os.environ["DEDUP_BACKEND"] = "local"      # dedup thuần Python (deterministic)

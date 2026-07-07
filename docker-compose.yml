@@ -1,0 +1,35 @@
+# News Search Engine — Demo Docker.
+#
+#   docker compose up --build            # demo offline: app + UI tại http://localhost:8000
+#   CACHE_BACKEND=redis FEEDBACK_BACKEND=redis docker compose --profile full up --build
+#                                        # thêm Redis (cache/feedback dùng chung)
+#
+# App chạy backend local/hash (offline, không tải model), tự nạp bài mẫu.
+
+services:
+  app:
+    build: .
+    image: news-search-engine:demo
+    ports:
+      - "8000:8000"
+    environment:
+      # Bật quản trị reindex trong demo (đổi token khi triển khai thật)
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-demo-admin}"
+      # Cho phép chuyển cache/feedback sang Redis khi bật profile full
+      CACHE_BACKEND: "${CACHE_BACKEND:-memory}"
+      FEEDBACK_BACKEND: "${FEEDBACK_BACKEND:-jsonl}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+    volumes:
+      - feedback:/app/data/feedback   # giữ lại log click giữa các lần chạy
+    restart: unless-stopped
+
+  # --- Tùy chọn (profile full): Redis cho cache & feedback dùng chung ---
+  redis:
+    image: redis:7-alpine
+    profiles: ["full"]
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  feedback:

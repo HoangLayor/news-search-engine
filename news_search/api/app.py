@@ -15,6 +15,7 @@ import hashlib
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Response
@@ -26,6 +27,17 @@ from news_search.ingest.cleaner import TZ_VN
 from news_search.models import SearchFilters, SearchQuery
 from news_search.service.metrics import render_dashboard
 from news_search.service.search_service import SearchService
+
+_UI_HTML_PATH = Path(__file__).parent / "ui.html"
+
+
+def _feedback_stats(settings: Settings) -> Optional[dict]:
+    """CTR/zero-result từ log feedback (chỉ backend jsonl)."""
+    if settings.feedback_enabled and settings.feedback_backend == "jsonl":
+        from news_search.feedback.analytics import compute_metrics
+
+        return compute_metrics(settings.feedback_path)
+    return None
 
 
 def _parse_dt(value: Optional[str], field: str) -> Optional[datetime]:
@@ -51,6 +63,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="News Search Engine", version="0.2.0")
     app.state.service = svc
+
+    # Tự nạp bài mẫu lúc khởi động (tiện demo Docker): chỉ khi bật cờ, nguồn sample
+    # và chỉ mục đang rỗng — an toàn, không lặp.
+    if settings.autoload_sample and settings.source == "sample" and len(svc.manager.store) == 0:
+        try:
+            from news_search.sources import get_source
+
+            src = get_source(settings)
+            try:
+                svc.manager.bulk_index(list(src.fetch_all(settings.ingest_batch_size)))
+            finally:
+                src.close()
+        except Exception as exc:  # nạp mẫu lỗi -> vẫn khởi động app
+            import warnings
+
+            warnings.warn(f"Autoload sample thất bại: {exc}")
 
     # ---------------------------------------------------------------- ingest
 
@@ -215,6 +243,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "qu": svc.pipeline.understander.enabled,
             },
         }
+
+    # ------------------------------------------------------------- Demo UI
+
+    @app.get("/stats")
+    def stats() -> dict:
+        """Số liệu tổng hợp cho UI (counts + metrics + feedback CTR)."""
+        return {
+            "counts": {
+                "articles": len(svc.manager.store),
+                "generation": svc.manager.generation,
+            },
+            "backends": {"embedder": settings.embedder, "vector": settings.vector_backend,
+                         "lexical": settings.lexical_backend, "reranker": settings.reranker},
+            "features": {
+                "feedback": settings.feedback_enabled, "cache": settings.cache_enabled,
+                "metrics": settings.metrics_enabled, "experiment": settings.experiment_enabled,
+                "qu": svc.pipeline.understander.enabled, "admin": bool(settings.admin_token),
+            },
+            "metrics": svc.metrics.snapshot() if svc.metrics else None,
+            "feedback": _feedback_stats(settings),
+        }
+
+    @app.get("/", response_class=HTMLResponse)
+    @app.get("/ui", response_class=HTMLResponse)
+    def ui() -> HTMLResponse:
+        """Trang demo UI tương tác. UI_ENABLED=false -> 404."""
+        if not settings.ui_enabled:
+            raise HTTPException(status_code=404, detail="UI đã tắt (đặt UI_ENABLED=true)")
+        try:
+            html = _UI_HTML_PATH.read_text(encoding="utf-8")
+        except FileNotFoundError:  # pragma: no cover
+            raise HTTPException(status_code=500, detail="Thiếu ui.html")
+        return HTMLResponse(html)
 
     return app
 

@@ -60,8 +60,8 @@ class Settings:
     # --- Lựa chọn backend ---
     lexical_backend: str = field(default_factory=lambda: _env("LEXICAL_BACKEND", "local"))
     vector_backend: str = field(default_factory=lambda: _env("VECTOR_BACKEND", "local"))  # local | milvus
-    embedder: str = field(default_factory=lambda: _env("EMBEDDER", "bge"))  # hash | bge | openai
-    reranker: str = field(default_factory=lambda: _env("RERANKER", "none"))  # none | bge
+    embedder: str = field(default_factory=lambda: _env("EMBEDDER", "vi"))  # hash | vi | bge | openai
+    reranker: str = field(default_factory=lambda: _env("RERANKER", "none"))  # none | vi | bge
 
     # --- Embedding ---
     embedding_dim: int = field(default_factory=lambda: _env_int("EMBEDDING_DIM", 256))  # chỉ áp cho HashingEmbedder
@@ -73,6 +73,15 @@ class Settings:
     bge_model: str = field(default_factory=lambda: _env("BGE_MODEL", "BAAI/bge-m3"))
     bge_dim: int = field(default_factory=lambda: _env_int("BGE_DIM", 1024))
     bge_device: str = field(default_factory=lambda: _env("BGE_DEVICE", ""))  # "" -> tự chọn (cuda nếu có)
+    # Embedder tiếng Việt CHUYÊN BIỆT (fine-tune BGE-m3) — chất lượng semantic VN cao hơn
+    vi_embed_model: str = field(default_factory=lambda: _env("VI_EMBED_MODEL", "AITeamVN/Vietnamese_Embedding"))
+    vi_embed_dim: int = field(default_factory=lambda: _env_int("VI_EMBED_DIM", 1024))
+    # Reranker tiếng Việt chuyên biệt (cross-encoder, fine-tune bge-reranker-v2-m3)
+    vi_rerank_model: str = field(default_factory=lambda: _env("VI_RERANK_MODEL", "AITeamVN/Vietnamese_Reranker"))
+
+    # --- Tách từ (F-03) ---
+    # auto: pyvi -> underthesea -> regex; hoặc ép: pyvi | underthesea | regex
+    tokenizer: str = field(default_factory=lambda: _env("TOKENIZER", "auto"))
 
     # --- Milvus (VECTOR_BACKEND=milvus), chỉ mục HNSW ---
     milvus_uri: str = field(default_factory=lambda: _env("MILVUS_URI", "http://localhost:19530"))
@@ -103,6 +112,7 @@ class Settings:
     rerank_top_n: int = field(default_factory=lambda: _env_int("RERANK_TOP_N", 50))
 
     # --- Dedup / đa dạng hóa (F-07, F-14) ---
+    dedup_backend: str = field(default_factory=lambda: _env("DEDUP_BACKEND", "local"))  # local | datasketch
     dedup_threshold: float = field(default_factory=lambda: _env_float("DEDUP_THRESHOLD", 0.7))
     dedup_num_perm: int = field(default_factory=lambda: _env_int("DEDUP_NUM_PERM", 128))
     dedup_shingle_size: int = field(default_factory=lambda: _env_int("DEDUP_SHINGLE_SIZE", 3))
@@ -178,6 +188,11 @@ class Settings:
 
     # --- Admin (blue-green reindex) ---
     admin_token: str = field(default_factory=lambda: _env("ADMIN_TOKEN", ""))  # rỗng -> route admin tắt
+
+    # --- Demo UI ---
+    ui_enabled: bool = field(default_factory=lambda: _env_bool("UI_ENABLED", True))
+    # Tự nạp bài mẫu lúc khởi động nếu chỉ mục rỗng & SOURCE=sample (tiện demo Docker)
+    autoload_sample: bool = field(default_factory=lambda: _env_bool("AUTOLOAD_SAMPLE", False))
 
     def pg_conninfo(self) -> dict:
         """Tham số kết nối psycopg (dict, tránh escape ký tự đặc biệt trong mật khẩu)."""
