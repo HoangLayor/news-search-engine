@@ -1,7 +1,11 @@
 """Chuẩn hóa & token hóa văn bản tiếng Việt (F-03).
 
-Ưu tiên underthesea (word_tokenize) nếu cài được; fallback thuần stdlib
-tách token bằng regex ``\\w+`` (unicode). Mọi hàm deterministic, không I/O.
+Bộ tách từ chọn theo cấu hình ``TOKENIZER`` (mặc định ``auto``):
+    auto  -> pyvi -> underthesea -> regex (dùng cái nào cài được, ưu tiên trái)
+    pyvi  -> ép pyvi (tách từ ghép "bất_động_sản" -> BM25 tiếng Việt chính xác hơn)
+    underthesea | regex -> ép tương ứng
+pyvi/underthesea tách **từ ghép** (nối bằng "_"), nâng độ chính xác lexical rõ rệt
+so với regex tách theo âm tiết. Mọi hàm deterministic, không I/O.
 """
 
 from __future__ import annotations
@@ -9,16 +13,31 @@ from __future__ import annotations
 import re
 import unicodedata
 
-# --- Import guard: underthesea là thư viện nặng, không bắt buộc ---
-try:  # pragma: no cover - phụ thuộc môi trường
-    from underthesea import word_tokenize as _underthesea_word_tokenize
-except ImportError:  # pragma: no cover
-    _underthesea_word_tokenize = None
+from news_search.config import Settings
 
 # Gom mọi whitespace (space, tab, newline, nbsp...) về 1 space
 _WS_RE = re.compile(r"\s+")
 # Token = chuỗi chữ/số/underscore (unicode); dấu câu bị loại
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+# --- Chọn bộ tách từ MỘT LẦN lúc import (đọc mode qua config -> .env đã nạp) ---
+_MODE = Settings().tokenizer.strip().lower()
+_pyvi_tokenize = None
+_underthesea_word_tokenize = None
+
+if _MODE in ("auto", "pyvi"):
+    try:  # pragma: no cover - phụ thuộc môi trường
+        from pyvi import ViTokenizer
+
+        _pyvi_tokenize = ViTokenizer.tokenize
+    except ImportError:  # pragma: no cover
+        _pyvi_tokenize = None
+
+if _pyvi_tokenize is None and _MODE in ("auto", "underthesea"):
+    try:  # pragma: no cover
+        from underthesea import word_tokenize as _underthesea_word_tokenize
+    except ImportError:  # pragma: no cover
+        _underthesea_word_tokenize = None
 
 
 def normalize_text(text: str) -> str:
@@ -43,21 +62,24 @@ def fold_diacritics(text: str) -> str:
 def tokenize(text: str) -> list[str]:
     """Tách token: normalize_text rồi giữ chữ + số, bỏ dấu câu.
 
-    Có underthesea: dùng word_tokenize (từ ghép nối bằng "_") trên văn bản
-    đã normalize; không có: tách theo regex ``\\w+`` (unicode).
-    Trả về list token lowercase, GIỮ NGUYÊN dấu tiếng Việt.
+    Ưu tiên bộ tách từ ghép (pyvi/underthesea, nối "_" như "giá_vàng"); không có
+    -> regex ``\\w+`` theo âm tiết. Trả list token lowercase, GIỮ NGUYÊN dấu.
     """
     norm = normalize_text(text)
     if not norm:
         return []
-    if _underthesea_word_tokenize is not None:  # pragma: no cover - tùy môi trường
+    if _pyvi_tokenize is not None:  # pragma: no cover - tùy môi trường
         try:
-            # format="text": từ ghép được nối bằng "_" (vd "giá_vàng")
+            # ViTokenizer nối từ ghép bằng "_" (vd "bất_động_sản")
+            return _TOKEN_RE.findall(_pyvi_tokenize(norm))
+        except Exception:
+            pass  # lỗi runtime -> thử tiếp/fallback
+    if _underthesea_word_tokenize is not None:  # pragma: no cover
+        try:
             joined = _underthesea_word_tokenize(norm, format="text")
-            # \w+ giữ nguyên "_" trong từ ghép, loại dấu câu đứng riêng
             return _TOKEN_RE.findall(joined)
         except Exception:
-            pass  # underthesea lỗi runtime -> rơi về fallback
+            pass
     return _TOKEN_RE.findall(norm)
 
 
