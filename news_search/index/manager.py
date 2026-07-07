@@ -15,7 +15,7 @@ import json
 import os
 
 from news_search.config import Settings
-from news_search.index.dedup import MinHashDeduper
+from news_search.index.dedup import get_deduper
 from news_search.index.embeddings import get_embedder
 from news_search.index.entities import KnowledgeGraph, extract_entities
 from news_search.index.lexical import get_lexical_index
@@ -61,11 +61,7 @@ class IndexManager:
         self.lexical = get_lexical_index(self.settings)
         self.embedder = get_embedder(self.settings)
         self.vector = get_vector_index(self.settings, self.embedder.dim)
-        self.deduper = MinHashDeduper(
-            num_perm=self.settings.dedup_num_perm,
-            threshold=self.settings.dedup_threshold,
-            shingle_size=self.settings.dedup_shingle_size,
-        )
+        self.deduper = get_deduper(self.settings)
         self.kg = KnowledgeGraph()
         # Bộ đếm thế hệ: tăng mỗi khi chỉ mục đổi -> dùng cho invalidation cache.
         self.generation = 0
