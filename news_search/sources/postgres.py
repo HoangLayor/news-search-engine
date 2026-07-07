@@ -6,7 +6,7 @@
     articles.desc + articles.content   -> body (HTML, tầng ingest làm sạch)
     articles.slug                      -> url (ARTICLE_BASE_URL + slug)
     articles.publish_date              -> published_at (tz-aware Asia/HCM)
-    article_authors.full_name          -> author (gộp nhiều tác giả)
+    pseudonyms.name (qua pseudonym_id) -> author (BÚT DANH, không phải article_authors)
     categories.name (is_major)         -> category
     tags.name                          -> tags[]
     articles.source                    -> source
@@ -37,7 +37,7 @@ SELECT
     a.id, a.title, a.brief_title, a.desc AS lead, a.content, a.slug, a.source,
     a.publish_date, a.created_at, a.updated_at,
     cat.name    AS category,
-    au.authors  AS author,
+    ps.name     AS author,
     tg.tags     AS tags
 FROM {s}.articles a
 LEFT JOIN LATERAL (
@@ -48,14 +48,8 @@ LEFT JOIN LATERAL (
     ORDER BY ac.is_major DESC NULLS LAST, ac.display_order ASC NULLS LAST
     LIMIT 1
 ) cat ON TRUE
-LEFT JOIN LATERAL (
-    SELECT string_agg(x.full_name, ', ' ORDER BY x.order_index NULLS LAST) AS authors
-    FROM (
-        SELECT full_name, order_index
-        FROM {s}.article_authors
-        WHERE article_id = a.id AND deleted_at IS NULL AND full_name IS NOT NULL
-    ) x
-) au ON TRUE
+-- Tác giả = BÚT DANH (pseudonym) qua articles.pseudonym_id, không phải article_authors
+LEFT JOIN {s}.pseudonyms ps ON ps.id = a.pseudonym_id AND ps.deleted_at IS NULL
 LEFT JOIN LATERAL (
     SELECT array_agg(t.name) AS tags
     FROM {s}.article_tags atg
