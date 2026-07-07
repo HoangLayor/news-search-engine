@@ -77,10 +77,6 @@ class IndexManager:
         """
         article = raw if isinstance(raw, Article) else normalize_article(raw)
 
-        if article.status != "published":
-            self.remove_article(article.article_id)
-            return article
-
         aid = article.article_id
         self.store.put(article)
         self.lexical.add(article)

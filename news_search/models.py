@@ -47,10 +47,11 @@ class SearchFilters:
     source: Optional[str] = None
     date_from: Optional[datetime] = None  # timezone-aware nếu có
     date_to: Optional[datetime] = None
+    status: Optional[str] = "published"  # Mặc định chỉ lấy bài published (bảo vệ public search)
 
     def is_empty(self) -> bool:
         return not any(
-            (self.author, self.category, self.source, self.date_from, self.date_to)
+            (self.author, self.category, self.source, self.date_from, self.date_to, self.status)
         )
 
     def matches(self, article: Article) -> bool:
@@ -59,6 +60,8 @@ class SearchFilters:
         if self.category and (article.category or "").strip().lower() != self.category.strip().lower():
             return False
         if self.source and (article.source or "").strip().lower() != self.source.strip().lower():
+            return False
+        if self.status and (article.status or "").strip().lower() != self.status.strip().lower():
             return False
         if self.date_from and article.published_at < self.date_from:
             return False
