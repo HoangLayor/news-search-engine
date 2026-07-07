@@ -10,10 +10,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Chỉ cài phụ thuộc LÕI (có sẵn wheel, không cần compiler): fastapi, uvicorn,
-# pydantic, numpy, python-dotenv. KHÔNG cài requirements.txt (kéo theo torch).
+# Phụ thuộc LÕI (có sẵn wheel, không cần compiler) + pymilvus/redis cho các
+# profile Milvus/Redis (đều lazy-import: KHÔNG kéo theo torch, không ảnh hưởng
+# demo local mặc định). KHÔNG cài requirements.txt (nó kéo theo torch).
 RUN pip install --no-cache-dir \
-      "fastapi>=0.115" "uvicorn>=0.30" "pydantic>=2.7" "numpy>=1.26" "python-dotenv>=1.0"
+      "fastapi>=0.115" "uvicorn>=0.30" "pydantic>=2.7" "numpy>=1.26" "python-dotenv>=1.0" \
+      "pymilvus>=2.4" "redis>=5.0"
 
 # Copy mã nguồn (bao gồm data/sample_articles.json, news_search/api/ui.html)
 COPY news_search/ ./news_search/

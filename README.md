@@ -126,17 +126,27 @@ Chạy demo tương tác **offline, tức thì** (image nhẹ — chỉ core dep
 docker compose up --build          # -> mở http://localhost:8000
 # Tùy chọn có Redis (cache/feedback dùng chung):
 CACHE_BACKEND=redis FEEDBACK_BACKEND=redis docker compose --profile full up --build
+# Tùy chọn có Milvus + Attu (quan sát/quản lý vector):
+docker compose -f docker-compose.yml -f docker-compose.milvus.yml up --build
 ```
 
 Container tự chạy backend `local/hash`, **tự nạp bài mẫu** (`AUTOLOAD_SAMPLE`), bật
 feedback + cache + metrics + UI. Không cần tải model hay dịch vụ ngoài. Nút *Reindex*
 trong UI cần bật admin: `ADMIN_TOKEN=<bí-mật> docker compose up` (mặc định tắt an toàn).
 
+**Milvus + Attu** ([docker-compose.milvus.yml](docker-compose.milvus.yml)): dựng
+Milvus standalone (etcd + minio + milvus) và **Attu** — web UI chính thức để quan
+sát/quản lý collection, index, vector. App chuyển `VECTOR_BACKEND=milvus` và nạp
+vector mẫu vào collection `news_articles`. Sau khi lên: **Attu tại http://localhost:8001**
+(kết nối sẵn `milvus-standalone:19530`), Milvus gRPC `localhost:19530`.
+
 **Demo UI** ([news_search/api/ui.html](news_search/api/ui.html)) tại `GET /` (hoặc `/ui`):
-tìm kiếm (chọn mode + lọc chuyên mục/tác giả/thời gian), xem kết quả có highlight,
-**click được ghi log** (feedback → CTR), thêm bài viết, reindex, và **chỉ số trực
-tiếp** (số bài, latency p95, cache-hit, CTR) tự làm mới. Trang render an toàn XSS
-(escape + chỉ cho phép `<b>` của snippet). Tắt bằng `UI_ENABLED=false`.
+tìm kiếm (chọn mode + lọc chuyên mục/tác giả/thời gian), kết quả có highlight,
+**click ghi log** (feedback → CTR), thêm bài viết, reindex, **chỉ số trực tiếp** tự
+làm mới, và **🔬 chế độ Giải thích** — bật để xem *từng bước pipeline* (hiểu truy vấn
+→ BM25 → vector → RRF → time-decay → rerank → gom cụm → MMR → kết quả) kèm **danh
+sách trung gian + điểm số** ở mỗi tầng (endpoint `GET /explain`). Render an toàn XSS.
+Tắt UI bằng `UI_ENABLED=false`.
 
 Chạy UI không cần Docker: `uvicorn news_search.api.app:app --port 8000` (đặt
 `AUTOLOAD_SAMPLE=true SOURCE=sample` để có sẵn dữ liệu) rồi mở `http://localhost:8000`.
@@ -150,6 +160,7 @@ Chạy UI không cần Docker: `uvicorn news_search.api.app:app --port 8000` (đ
 | `DELETE /articles/{id}` | Gỡ bài khỏi mọi chỉ mục (F-08) |
 | `GET /articles/{id}/entities` | Thực thể của bài (F-06) |
 | `GET /search?q=&mode=&top_k=&author=&category=&source=&date_from=&date_to=` | Trả JSON array, mỗi phần tử ĐÚNG 5 trường. `q` rỗng → 400. Header `X-Search-Id` khi bật feedback |
+| `GET /explain?q=&mode=&...` | **Giải thích pipeline**: `{query, mode, results, trace}` — từng bước + kết quả trung gian (bỏ qua cache) |
 | `POST /events/click` | Log click/dwell (GĐ1) — `{search_id, article_id, position, dwell_ms?}` |
 | `GET /stats` | JSON tổng hợp cho UI: counts + backends + features + metrics + CTR |
 | `GET /metrics` · `GET /dashboard` | Prometheus text · dashboard HTML (GĐ5) |
