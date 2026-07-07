@@ -12,11 +12,15 @@ Mọi tính năng phụ mặc định tắt/an toàn; thiếu phụ thuộc thì
 from __future__ import annotations
 
 import hashlib
+import hmac
+import logging
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -71,14 +75,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from news_search.sources import get_source
 
             src = get_source(settings)
+        except Exception:  # không mở được nguồn -> app vẫn khởi động (chỉ mục rỗng)
+            _log.exception("Autoload: không mở được nguồn mẫu")
+        else:
             try:
-                svc.manager.bulk_index(list(src.fetch_all(settings.ingest_batch_size)))
+                # Nạp resilient TỪNG bài: 1 bài lỗi không làm hỏng cả đợt (khác bulk_index)
+                for raw in src.fetch_all(settings.ingest_batch_size):
+                    try:
+                        svc.manager.index_article(raw)
+                    except Exception:
+                        _log.exception("Autoload: bỏ qua 1 bài lỗi")
             finally:
                 src.close()
-        except Exception as exc:  # nạp mẫu lỗi -> vẫn khởi động app
-            import warnings
-
-            warnings.warn(f"Autoload sample thất bại: {exc}")
 
     # ---------------------------------------------------------------- ingest
 
@@ -219,7 +227,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Reindex blue-green từ nguồn cấu hình. Tắt nếu ADMIN_TOKEN rỗng; sai token -> 403."""
         if not settings.admin_token:
             raise HTTPException(status_code=404, detail="admin đã tắt (đặt ADMIN_TOKEN để bật)")
-        if x_admin_token != settings.admin_token:
+        # So sánh constant-time -> tránh rò rỉ token qua kênh thời gian
+        if not hmac.compare_digest(x_admin_token, settings.admin_token):
             raise HTTPException(status_code=403, detail="token admin không đúng")
         limit = payload.get("limit")
         n = svc.reindex(limit=int(limit) if limit else None)

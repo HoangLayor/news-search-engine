@@ -66,19 +66,19 @@
   <section>
     <div class="card">
       <div class="searchbar">
-        <input id="q" placeholder="Nhập truy vấn tiếng Việt… (vd: lạm phát tháng 6, vì sao giá vàng tăng)" autofocus>
+        <input id="q" aria-label="Truy vấn tìm kiếm" placeholder="Nhập truy vấn tiếng Việt… (vd: lạm phát tháng 6, vì sao giá vàng tăng)" autofocus>
         <button id="btnSearch">Tìm</button>
       </div>
       <div class="filters">
-        <div><label>Chế độ</label>
+        <div><label for="mode">Chế độ</label>
           <select id="mode"><option value="hybrid">hybrid</option><option value="lexical">lexical</option><option value="semantic">semantic</option></select></div>
-        <div><label>Top-k</label><input id="topk" type="number" min="1" max="50" value="10"></div>
-        <div><label>Chuyên mục</label><input id="category" placeholder="vd: Kinh tế"></div>
-        <div><label>Tác giả</label><input id="author" placeholder="tùy chọn"></div>
-        <div><label>Từ ngày</label><input id="dateFrom" type="date"></div>
-        <div><label>Đến ngày</label><input id="dateTo" type="date"></div>
+        <div><label for="topk">Top-k</label><input id="topk" type="number" min="1" max="100" value="10"></div>
+        <div><label for="category">Chuyên mục</label><input id="category" placeholder="vd: Kinh tế"></div>
+        <div><label for="author">Tác giả</label><input id="author" placeholder="tùy chọn"></div>
+        <div><label for="dateFrom">Từ ngày</label><input id="dateFrom" type="date"></div>
+        <div><label for="dateTo">Đến ngày</label><input id="dateTo" type="date"></div>
       </div>
-      <div class="msg" id="searchMsg"></div>
+      <div class="msg" id="searchMsg" aria-live="polite"></div>
     </div>
 
     <div class="card" style="margin-top:1rem">
@@ -137,6 +137,10 @@ let searchId = null, resultsShownAt = 0;
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => (
   {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function snippetHtml(s){ return esc(s).replace(/&lt;b&gt;/g,"<b>").replace(/&lt;\/b&gt;/g,"</b>"); }
+// Chỉ cho phép http(s) và URL tương đối -> chặn javascript:/data:/vbscript: (XSS)
+function safeUrl(u){ u = String(u ?? "").trim(); return /^(https?:\/\/|\/)/i.test(u) ? u : "#"; }
+// FastAPI 422 trả detail là MẢNG object -> trích thông điệp gọn (tránh "[object Object]")
+function detailMsg(d){ return Array.isArray(d) ? d.map(x => x.msg || JSON.stringify(x)).join("; ") : (d || ""); }
 
 async function jget(url){ const r = await fetch(url); if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status); return r; }
 
@@ -144,7 +148,8 @@ async function doSearch(){
   const q = $("q").value.trim();
   const msg = $("searchMsg"); msg.className="msg"; msg.textContent="";
   if(!q){ msg.textContent="Hãy nhập truy vấn."; return; }
-  const p = new URLSearchParams({q, mode:$("mode").value, top_k:$("topk").value||"10"});
+  const topk = Math.min(100, Math.max(1, parseInt($("topk").value,10) || 10));  // kẹp 1..100
+  const p = new URLSearchParams({q, mode:$("mode").value, top_k:String(topk)});
   for(const [k,el] of [["category","category"],["author","author"],["date_from","dateFrom"],["date_to","dateTo"]]){
     const v = $(el).value.trim(); if(v) p.set(k, v);
   }
@@ -152,7 +157,7 @@ async function doSearch(){
   try{
     const t0 = performance.now();
     const r = await fetch("/search?"+p.toString());
-    if(!r.ok){ const e = await r.json().catch(()=>({})); throw new Error(e.detail||("HTTP "+r.status)); }
+    if(!r.ok){ const e = await r.json().catch(()=>({})); throw new Error(detailMsg(e.detail)||("HTTP "+r.status)); }
     searchId = r.headers.get("X-Search-Id");
     const items = await r.json();
     resultsShownAt = Date.now();
@@ -167,13 +172,15 @@ function renderResults(items){
   $("resultCount").textContent = items.length ? `(${items.length})` : "";
   const box = $("results");
   if(!items.length){ box.innerHTML = '<div class="msg">Không có kết quả phù hợp.</div>'; return; }
+  // KHÔNG nội suy dữ liệu vào inline JS (onclick) — dùng data-* + event delegation
+  // để tránh XSS khi article_id/url do người dùng nhập (POST /articles không xác thực).
   box.innerHTML = items.map((it,i)=>{
     const date = (it.published_at||"").slice(0,10);
-    const href = esc(it.url||"#");
+    const href = esc(safeUrl(it.url));
     return `<div class="result">
       <h3><span class="rank">${i+1}.</span>
         <a href="${href}" target="_blank" rel="noopener"
-           onclick="logClick('${esc(it.article_id)}',${i+1})">${esc(it.title)}</a></h3>
+           data-aid="${esc(it.article_id)}" data-pos="${i+1}">${esc(it.title)}</a></h3>
       <div class="meta">${esc(date)} · <code>${esc(it.article_id)}</code></div>
       <div class="snippet">${snippetHtml(it.snippet)}</div>
     </div>`;
@@ -229,7 +236,7 @@ $("addForm").addEventListener("submit", async (e)=>{
   try{
     const r = await fetch("/articles",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d = await r.json();
-    if(!r.ok) throw new Error(d.detail||("HTTP "+r.status));
+    if(!r.ok) throw new Error(detailMsg(d.detail)||("HTTP "+r.status));
     msg.textContent = `Đã nạp: ${d.article_id}`; $("addForm").reset(); refreshStats();
   }catch(e){ msg.className="msg err"; msg.textContent="Lỗi: "+e.message; }
 });
@@ -241,13 +248,18 @@ $("btnReindex").addEventListener("click", async ()=>{
       headers:{"Content-Type":"application/json","X-Admin-Token":$("adminToken").value},
       body: JSON.stringify({})});
     const d = await r.json();
-    if(!r.ok) throw new Error(d.detail||("HTTP "+r.status));
+    if(!r.ok) throw new Error(detailMsg(d.detail)||("HTTP "+r.status));
     msg.textContent = `Reindex ${d.reindexed} bài (gen ${d.generation})`; refreshStats();
   }catch(e){ msg.className="msg err"; msg.textContent="Lỗi: "+e.message; }
 });
 
 $("btnSearch").addEventListener("click", doSearch);
 $("q").addEventListener("keydown", e=>{ if(e.key==="Enter") doSearch(); });
+// Log click qua event delegation (không dùng inline onclick -> an toàn XSS)
+$("results").addEventListener("click", (e)=>{
+  const a = e.target.closest("a[data-aid]");
+  if(a) logClick(a.dataset.aid, Number(a.dataset.pos));
+});
 
 checkHealth(); refreshStats(); setInterval(refreshStats, 5000);
 </script>

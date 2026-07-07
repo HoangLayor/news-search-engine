@@ -129,7 +129,8 @@ CACHE_BACKEND=redis FEEDBACK_BACKEND=redis docker compose --profile full up --bu
 ```
 
 Container tự chạy backend `local/hash`, **tự nạp bài mẫu** (`AUTOLOAD_SAMPLE`), bật
-feedback + cache + metrics + UI. Không cần tải model hay dịch vụ ngoài.
+feedback + cache + metrics + UI. Không cần tải model hay dịch vụ ngoài. Nút *Reindex*
+trong UI cần bật admin: `ADMIN_TOKEN=<bí-mật> docker compose up` (mặc định tắt an toàn).
 
 **Demo UI** ([news_search/api/ui.html](news_search/api/ui.html)) tại `GET /` (hoặc `/ui`):
 tìm kiếm (chọn mode + lọc chuyên mục/tác giả/thời gian), xem kết quả có highlight,

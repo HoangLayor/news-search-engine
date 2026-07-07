@@ -13,8 +13,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Bật quản trị reindex trong demo (đổi token khi triển khai thật)
-      ADMIN_TOKEN: "${ADMIN_TOKEN:-demo-admin}"
+      # Route /admin/reindex TẮT mặc định (token rỗng). Bật bằng:
+      #   ADMIN_TOKEN=<bí-mật> docker compose up
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
       # Cho phép chuyển cache/feedback sang Redis khi bật profile full
       CACHE_BACKEND: "${CACHE_BACKEND:-memory}"
       FEEDBACK_BACKEND: "${FEEDBACK_BACKEND:-jsonl}"
@@ -24,11 +25,19 @@ services:
     restart: unless-stopped
 
   # --- Tùy chọn (profile full): Redis cho cache & feedback dùng chung ---
+  # App kết nối qua mạng nội bộ compose (redis://redis:6379); cổng chỉ bind
+  # loopback để không phơi Redis (không mật khẩu) ra ngoài. Đặt mật khẩu +
+  # REDIS_URL có auth khi dùng thật.
   redis:
     image: redis:7-alpine
     profiles: ["full"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
 volumes:
