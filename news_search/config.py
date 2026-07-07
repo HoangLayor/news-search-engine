@@ -189,6 +189,11 @@ class Settings:
     # --- Admin (blue-green reindex) ---
     admin_token: str = field(default_factory=lambda: _env("ADMIN_TOKEN", ""))  # rỗng -> route admin tắt
 
+    # --- Demo UI ---
+    ui_enabled: bool = field(default_factory=lambda: _env_bool("UI_ENABLED", True))
+    # Tự nạp bài mẫu lúc khởi động nếu chỉ mục rỗng & SOURCE=sample (tiện demo Docker)
+    autoload_sample: bool = field(default_factory=lambda: _env_bool("AUTOLOAD_SAMPLE", False))
+
     def pg_conninfo(self) -> dict:
         """Tham số kết nối psycopg (dict, tránh escape ký tự đặc biệt trong mật khẩu)."""
         return {

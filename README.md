@@ -118,6 +118,28 @@ python -m venv .venv
 .venv\Scripts\python.exe -m uvicorn news_search.api.app:app --port 8000
 ```
 
+## Docker & Demo UI
+
+Chạy demo tương tác **offline, tức thì** (image nhẹ — chỉ core deps, KHÔNG torch/model):
+
+```bash
+docker compose up --build          # -> mở http://localhost:8000
+# Tùy chọn có Redis (cache/feedback dùng chung):
+CACHE_BACKEND=redis FEEDBACK_BACKEND=redis docker compose --profile full up --build
+```
+
+Container tự chạy backend `local/hash`, **tự nạp bài mẫu** (`AUTOLOAD_SAMPLE`), bật
+feedback + cache + metrics + UI. Không cần tải model hay dịch vụ ngoài.
+
+**Demo UI** ([news_search/api/ui.html](news_search/api/ui.html)) tại `GET /` (hoặc `/ui`):
+tìm kiếm (chọn mode + lọc chuyên mục/tác giả/thời gian), xem kết quả có highlight,
+**click được ghi log** (feedback → CTR), thêm bài viết, reindex, và **chỉ số trực
+tiếp** (số bài, latency p95, cache-hit, CTR) tự làm mới. Trang render an toàn XSS
+(escape + chỉ cho phép `<b>` của snippet). Tắt bằng `UI_ENABLED=false`.
+
+Chạy UI không cần Docker: `uvicorn news_search.api.app:app --port 8000` (đặt
+`AUTOLOAD_SAMPLE=true SOURCE=sample` để có sẵn dữ liệu) rồi mở `http://localhost:8000`.
+
 ### API
 
 | Method & path | Mô tả |
@@ -126,7 +148,12 @@ python -m venv .venv
 | `POST /articles/bulk` | Nạp một lô bài |
 | `DELETE /articles/{id}` | Gỡ bài khỏi mọi chỉ mục (F-08) |
 | `GET /articles/{id}/entities` | Thực thể của bài (F-06) |
-| `GET /search?q=&mode=&top_k=&author=&category=&source=&date_from=&date_to=` | Trả JSON array, mỗi phần tử ĐÚNG 5 trường. `q` rỗng → 400 |
+| `GET /search?q=&mode=&top_k=&author=&category=&source=&date_from=&date_to=` | Trả JSON array, mỗi phần tử ĐÚNG 5 trường. `q` rỗng → 400. Header `X-Search-Id` khi bật feedback |
+| `POST /events/click` | Log click/dwell (GĐ1) — `{search_id, article_id, position, dwell_ms?}` |
+| `GET /stats` | JSON tổng hợp cho UI: counts + backends + features + metrics + CTR |
+| `GET /metrics` · `GET /dashboard` | Prometheus text · dashboard HTML (GĐ5) |
+| `POST /admin/reindex` | Reindex blue-green (header `X-Admin-Token`) |
+| `GET /` · `GET /ui` | **Demo UI** tương tác (`UI_ENABLED`) |
 | `GET /healthz` | Sức khỏe + số lượng đã index |
 
 Ví dụ:

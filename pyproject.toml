@@ -38,5 +38,8 @@ news-index = "scripts.index_from_postgres:main"
 [tool.setuptools.packages.find]
 include = ["news_search*"]
 
+[tool.setuptools.package-data]
+news_search = ["api/ui.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
