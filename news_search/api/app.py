@@ -166,6 +166,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response.headers["X-Variant"] = variant
         return items
 
+    @app.get("/explain")
+    def explain(
+        q: str = Query("", description="Truy vấn cần giải thích"),
+        mode: str = Query("hybrid"),
+        top_k: int = Query(10, ge=1, le=100),
+        author: Optional[str] = Query(None),
+        category: Optional[str] = Query(None),
+        source: Optional[str] = Query(None),
+        date_from: Optional[str] = Query(None),
+        date_to: Optional[str] = Query(None),
+    ) -> dict:
+        """Giải thích pipeline: trả {query, mode, results, trace} — từng bước xử lý
+        + kết quả trung gian (bỏ qua cache). Phục vụ UI quan sát cách xếp hạng."""
+        if not q or not q.strip():
+            raise HTTPException(status_code=400, detail="Thiếu truy vấn 'q'")
+        if mode not in ("lexical", "semantic", "hybrid"):
+            raise HTTPException(status_code=400, detail=f"mode không hợp lệ: {mode!r}")
+        filters = SearchFilters(
+            author=author, category=category, source=source,
+            date_from=_parse_dt(date_from, "date_from"),
+            date_to=_parse_dt(date_to, "date_to"),
+        )
+        query = SearchQuery(text=q, filters=filters, top_k=top_k, mode=mode)
+        try:
+            return svc.pipeline.explain(query)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # ------------------------------------------------------------- feedback (GĐ1)
 
     @app.post("/events/click")
