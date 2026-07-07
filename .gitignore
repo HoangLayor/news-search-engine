@@ -1,0 +1,28 @@
+# Môi trường & secrets
+.venv/
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Model cache / dữ liệu index cục bộ
+.venv/huggingface_cache/
+huggingface_cache/
+*.db
+milvus.db
+milvus_data/
+
+# Notebook
+.ipynb_checkpoints/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
