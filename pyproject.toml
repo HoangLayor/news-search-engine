@@ -22,7 +22,7 @@ dependencies = [
 postgres = ["psycopg[binary]>=3.1"]           # SOURCE=postgres
 milvus = ["pymilvus>=2.4"]                     # VECTOR_BACKEND=milvus (HNSW)
 bge = ["sentence-transformers>=3", "torch>=2.1"]  # EMBEDDER=bge (BGE-m3); hoặc FlagEmbedding
-vi = ["sentence-transformers>=3", "torch>=2.1", "pyvi>=0.1"]  # EMBEDDER/RERANKER=vi (AITeamVN) + tách từ pyvi
+vi = ["sentence-transformers>=3", "torch>=2.1", "pyvi>=0.1", "sentencepiece", "protobuf"]  # EMBEDDER/RERANKER=vi (AITeamVN) + tách từ pyvi
 flagembedding = ["FlagEmbedding>=1.2"]         # EMBEDDER=bge / RERANKER=bge/vi (native)
 openai = ["openai>=1.30"]                      # EMBEDDER=openai
 neo4j = ["neo4j>=5.20"]                        # Knowledge graph production

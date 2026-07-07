@@ -12,6 +12,8 @@ services:
     image: news-search-engine:demo
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       # Route /admin/reindex TẮT mặc định (token rỗng). Bật bằng:
       #   ADMIN_TOKEN=<bí-mật> docker compose up
@@ -22,6 +24,7 @@ services:
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
     volumes:
       - feedback:/app/data/feedback   # giữ lại log click giữa các lần chạy
+      - hf_cache:/app/.venv/huggingface_cache # Lưu model tải về vĩnh viễn
     restart: unless-stopped
 
   # --- Tùy chọn (profile full): Redis cho cache & feedback dùng chung ---
@@ -30,11 +33,11 @@ services:
   # REDIS_URL có auth khi dùng thật.
   redis:
     image: redis:7-alpine
-    profiles: ["full"]
+    profiles: [ "full" ]
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -42,3 +45,4 @@ services:
 
 volumes:
   feedback:
+  hf_cache:
