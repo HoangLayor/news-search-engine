@@ -144,12 +144,20 @@ curl "http://localhost:8000/search?q=giá%20xăng&category=Kinh%20tế"
 Chọn backend qua biến môi trường (xem [.env.example](.env.example)). Mặc định là
 `local`/`hash`/`none` (offline). Chuyển production:
 
-| Biến | Local (mặc định) | Production |
+| Biến | Local / Dev | Production (khuyến nghị) |
 |---|---|---|
 | `LEXICAL_BACKEND` | `local` (BM25 thuần Python) | `opensearch` |
 | `VECTOR_BACKEND` | `local` (brute-force cosine) | `milvus` (chỉ mục **HNSW**) |
-| `EMBEDDER` | `hash` (char n-gram offline) | `bge` (BGE-m3 local) hoặc `openai` (`text-embedding-3-large`) |
-| `RERANKER` | `none` | `bge` (`BAAI/bge-reranker-v2-m3`) |
+| `EMBEDDER` | `hash` (offline, deterministic) | **`vi`** (`AITeamVN/Vietnamese_Embedding` — VN chuyên biệt, **mặc định**) · `bge` · `openai` |
+| `RERANKER` | `none` | **`vi`** (`AITeamVN/Vietnamese_Reranker`) · `bge` |
+| `TOKENIZER` | `regex` (test) | **`auto`** → `pyvi` (tách từ ghép "bất_động_sản") |
+| `DEDUP_BACKEND` | `local` (thuần Python) | `datasketch` (nhanh hơn ở quy mô) |
+
+> **Nâng cấp tiếng Việt chuyên biệt** ([embeddings.py](news_search/index/embeddings.py) `VietnameseEmbedder`,
+> [rerank.py](news_search/search/rerank.py) `VietnameseReranker`): mô hình fine-tune từ
+> BGE-m3 cho tiếng Việt → chất lượng semantic + top-k cao hơn bge gốc, **cùng hạ tầng**.
+> `pip install -e ".[vi,dedup]"` rồi đặt `EMBEDDER=vi RERANKER=vi TOKENIZER=auto DEDUP_BACKEND=datasketch`.
+> Model tải lần đầu (~2.6GB); bật GPU `BGE_DEVICE=cuda` cho index lô lớn.
 
 Cài thêm khi cần: bỏ comment các dòng tương ứng trong
 [requirements.txt](requirements.txt) (`opensearch-py`, `pymilvus`, `openai`,
