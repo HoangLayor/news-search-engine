@@ -191,16 +191,57 @@ class BGEEmbedder:
         return arr
 
 
+class VietnameseEmbedder:
+    """Embedder tiếng Việt CHUYÊN BIỆT (``AITeamVN/Vietnamese_Embedding``).
+
+    Fine-tune từ BGE-m3 trên dữ liệu tiếng Việt -> chất lượng semantic tiếng Việt
+    cao hơn bge-m3 gốc, **cùng hạ tầng** (dense 1024 chiều, sentence-transformers).
+    Import-guard ``sentence-transformers``: thiếu -> RuntimeError (fail-fast).
+    Nạp model một lần; vector trả về L2-normalized. Bật GPU qua ``BGE_DEVICE=cuda``.
+    """
+
+    def __init__(self, model_name: str = "AITeamVN/Vietnamese_Embedding",
+                 dim: int = 1024, device: str = "") -> None:
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
+        except ImportError as exc:  # pragma: no cover - phụ thuộc môi trường
+            raise RuntimeError(
+                "VietnameseEmbedder cần 'sentence-transformers' (chưa cài) — "
+                "cài sentence-transformers hoặc dùng EMBEDDER=hash"
+            ) from exc
+        self.dim = dim
+        self.model_name = model_name
+        self._model = SentenceTransformer(model_name, device=device or None)
+
+    def embed(self, texts: list[str]) -> np.ndarray:  # pragma: no cover - cần model nặng
+        if not texts:
+            return np.zeros((0, self.dim), dtype=np.float32)
+        arr = np.asarray(
+            self._model.encode(texts, normalize_embeddings=True, convert_to_numpy=True),
+            dtype=np.float32,
+        )
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)
+        np.divide(arr, norms, out=arr, where=norms > 0)
+        return arr
+
+
 def get_embedder(settings: Settings) -> Embedder:
     """Factory chọn embedder theo ``settings.embedder``.
 
-    - ``"hash"``   -> ``HashingEmbedder(settings.embedding_dim)`` (offline, fallback)
-    - ``"bge"``    -> ``BGEEmbedder(bge_model, bge_dim)`` (BGE-m3 local, chất lượng cao)
-    - ``"openai"`` -> ``OpenAIEmbedder(model, api_key)`` (dim mặc định 3072)
+    - ``"hash"``   -> ``HashingEmbedder`` (offline, fallback deterministic)
+    - ``"vi"``     -> ``VietnameseEmbedder`` (AITeamVN, tiếng Việt chuyên biệt — MẶC ĐỊNH)
+    - ``"bge"``    -> ``BGEEmbedder`` (BGE-m3 đa ngữ)
+    - ``"openai"`` -> ``OpenAIEmbedder`` (text-embedding-3-large)
     - khác         -> ``ValueError``
     """
     if settings.embedder == "hash":
         return HashingEmbedder(settings.embedding_dim)
+    if settings.embedder == "vi":
+        return VietnameseEmbedder(
+            model_name=settings.vi_embed_model,
+            dim=settings.vi_embed_dim,
+            device=settings.bge_device,
+        )
     if settings.embedder == "bge":
         return BGEEmbedder(
             model_name=settings.bge_model,
