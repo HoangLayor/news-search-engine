@@ -36,7 +36,7 @@ if hasattr(sys.stdout, "reconfigure"):
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Nạp bài từ nguồn dữ liệu vào chỉ mục.")
     p.add_argument("--source", help="sample | postgres (mặc định theo .env)")
-    p.add_argument("--limit", type=int, default=0, help="giới hạn số bài (0 = tất cả)")
+    p.add_argument("--limit", type=int, default=100, help="giới hạn số bài (0 = tất cả)")
     p.add_argument("--batch-size", type=int, default=0, help="cỡ lô fetch (0 = theo cấu hình)")
     p.add_argument("--since", help="chỉ nạp bài từ mốc ISO này (index tăng dần)")
     p.add_argument("--embedder", help="override EMBEDDER (hash|bge|openai)")

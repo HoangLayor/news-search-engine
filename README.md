@@ -47,23 +47,23 @@ biến môi trường mà **không đổi code** (import guard + factory).
 
 ## Ánh xạ chức năng F-01…F-15 → mã nguồn
 
-| Mã | Chức năng | File |
-|----|-----------|------|
-| F-01 | Khởi tạo cơ sở dữ liệu | [manager.py](news_search/index/manager.py) `IndexManager.__init__` |
-| F-02 | Thu nhận & chuẩn hóa bài | [ingest/cleaner.py](news_search/ingest/cleaner.py) |
-| F-03 | Tách & token hóa tiếng Việt | [ingest/tokenizer.py](news_search/ingest/tokenizer.py) |
-| F-04 | Đánh chỉ mục BM25 | [index/lexical.py](news_search/index/lexical.py) |
-| F-05 | Sinh embedding + vector index | [index/embeddings.py](news_search/index/embeddings.py), [index/vector.py](news_search/index/vector.py) |
-| F-06 | Trích xuất thực thể + KG | [index/entities.py](news_search/index/entities.py) |
-| F-07 | Phát hiện trùng/gần trùng | [index/dedup.py](news_search/index/dedup.py) |
-| F-08 | Cập nhật / gỡ bài đồng bộ | [manager.py](news_search/index/manager.py) `remove_article` |
-| F-09 | Tìm bằng từ khóa | [index/lexical.py](news_search/index/lexical.py) `search` |
-| F-10 | Tìm bằng câu hỏi tự nhiên | [index/vector.py](news_search/index/vector.py) `search` |
-| F-11 | Hybrid + RRF | [search/fusion.py](news_search/search/fusion.py), [search/pipeline.py](news_search/search/pipeline.py) |
-| F-12 | Lọc theo metadata | [models.py](news_search/models.py) `SearchFilters`, `ArticleStore.filter_ids` |
-| F-13 | Ưu tiên độ mới (time-decay/QDF) | [search/ranking.py](news_search/search/ranking.py) |
-| F-14 | Gom cụm & đa dạng hóa (MMR) | [search/diversify.py](news_search/search/diversify.py) |
-| F-15 | Trích đoạn nổi bật (snippet) | [search/snippet.py](news_search/search/snippet.py) |
+| Mã  | Chức năng                          | File                                                                                                 |
+| ---- | ------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| F-01 | Khởi tạo cơ sở dữ liệu         | [manager.py](news_search/index/manager.py) `IndexManager.__init__`                                  |
+| F-02 | Thu nhận & chuẩn hóa bài         | [ingest/cleaner.py](news_search/ingest/cleaner.py)                                                    |
+| F-03 | Tách & token hóa tiếng Việt      | [ingest/tokenizer.py](news_search/ingest/tokenizer.py)                                                |
+| F-04 | Đánh chỉ mục BM25                | [index/lexical.py](news_search/index/lexical.py)                                                      |
+| F-05 | Sinh embedding + vector index        | [index/embeddings.py](news_search/index/embeddings.py), [index/vector.py](news_search/index/vector.py) |
+| F-06 | Trích xuất thực thể + KG         | [index/entities.py](news_search/index/entities.py)                                                    |
+| F-07 | Phát hiện trùng/gần trùng       | [index/dedup.py](news_search/index/dedup.py)                                                          |
+| F-08 | Cập nhật / gỡ bài đồng bộ     | [manager.py](news_search/index/manager.py) `remove_article`                                         |
+| F-09 | Tìm bằng từ khóa                 | [index/lexical.py](news_search/index/lexical.py) `search`                                           |
+| F-10 | Tìm bằng câu hỏi tự nhiên      | [index/vector.py](news_search/index/vector.py) `search`                                             |
+| F-11 | Hybrid + RRF                         | [search/fusion.py](news_search/search/fusion.py), [search/pipeline.py](news_search/search/pipeline.py) |
+| F-12 | Lọc theo metadata                   | [models.py](news_search/models.py) `SearchFilters`, `ArticleStore.filter_ids`                     |
+| F-13 | Ưu tiên độ mới (time-decay/QDF) | [search/ranking.py](news_search/search/ranking.py)                                                    |
+| F-14 | Gom cụm & đa dạng hóa (MMR)      | [search/diversify.py](news_search/search/diversify.py)                                                |
+| F-15 | Trích đoạn nổi bật (snippet)    | [search/snippet.py](news_search/search/snippet.py)                                                    |
 
 Điều phối: [search/pipeline.py](news_search/search/pipeline.py) · HTTP API:
 [api/app.py](news_search/api/app.py) · Hợp đồng interface:
@@ -153,20 +153,20 @@ Chạy UI không cần Docker: `uvicorn news_search.api.app:app --port 8000` (đ
 
 ### API
 
-| Method & path | Mô tả |
-|---|---|
-| `POST /articles` | Nạp 1 bài (dict). Thiếu field bắt buộc → 422 |
-| `POST /articles/bulk` | Nạp một lô bài |
-| `DELETE /articles/{id}` | Gỡ bài khỏi mọi chỉ mục (F-08) |
-| `GET /articles/{id}/entities` | Thực thể của bài (F-06) |
-| `GET /search?q=&mode=&top_k=&author=&category=&source=&date_from=&date_to=` | Trả JSON array, mỗi phần tử ĐÚNG 5 trường. `q` rỗng → 400. Header `X-Search-Id` khi bật feedback |
-| `GET /explain?q=&mode=&...` | **Giải thích pipeline**: `{query, mode, results, trace}` — từng bước + kết quả trung gian (bỏ qua cache) |
-| `POST /events/click` | Log click/dwell (GĐ1) — `{search_id, article_id, position, dwell_ms?}` |
-| `GET /stats` | JSON tổng hợp cho UI: counts + backends + features + metrics + CTR |
-| `GET /metrics` · `GET /dashboard` | Prometheus text · dashboard HTML (GĐ5) |
-| `POST /admin/reindex` | Reindex blue-green (header `X-Admin-Token`) |
-| `GET /` · `GET /ui` | **Demo UI** tương tác (`UI_ENABLED`) |
-| `GET /healthz` | Sức khỏe + số lượng đã index |
+| Method & path                                                                 | Mô tả                                                                                                                   |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `POST /articles`                                                            | Nạp 1 bài (dict). Thiếu field bắt buộc → 422                                                                        |
+| `POST /articles/bulk`                                                       | Nạp một lô bài                                                                                                        |
+| `DELETE /articles/{id}`                                                     | Gỡ bài khỏi mọi chỉ mục (F-08)                                                                                      |
+| `GET /articles/{id}/entities`                                               | Thực thể của bài (F-06)                                                                                               |
+| `GET /search?q=&mode=&top_k=&author=&category=&source=&date_from=&date_to=` | Trả JSON array, mỗi phần tử ĐÚNG 5 trường.`q` rỗng → 400. Header `X-Search-Id` khi bật feedback            |
+| `GET /explain?q=&mode=&...`                                                 | **Giải thích pipeline**: `{query, mode, results, trace}` — từng bước + kết quả trung gian (bỏ qua cache) |
+| `POST /events/click`                                                        | Log click/dwell (GĐ1) —`{search_id, article_id, position, dwell_ms?}`                                                 |
+| `GET /stats`                                                                | JSON tổng hợp cho UI: counts + backends + features + metrics + CTR                                                      |
+| `GET /metrics` · `GET /dashboard`                                        | Prometheus text · dashboard HTML (GĐ5)                                                                                  |
+| `POST /admin/reindex`                                                       | Reindex blue-green (header`X-Admin-Token`)                                                                              |
+| `GET /` · `GET /ui`                                                      | **Demo UI** tương tác (`UI_ENABLED`)                                                                           |
+| `GET /healthz`                                                              | Sức khỏe + số lượng đã index                                                                                       |
 
 Ví dụ:
 
@@ -183,14 +183,14 @@ curl "http://localhost:8000/search?q=giá%20xăng&category=Kinh%20tế"
 Chọn backend qua biến môi trường (xem [.env.example](.env.example)). Mặc định là
 `local`/`hash`/`none` (offline). Chuyển production:
 
-| Biến | Local / Dev | Production (khuyến nghị) |
-|---|---|---|
-| `LEXICAL_BACKEND` | `local` (BM25 thuần Python) | `opensearch` |
-| `VECTOR_BACKEND` | `local` (brute-force cosine) | `milvus` (chỉ mục **HNSW**) |
-| `EMBEDDER` | `hash` (offline, deterministic) | **`vi`** (`AITeamVN/Vietnamese_Embedding` — VN chuyên biệt, **mặc định**) · `bge` · `openai` |
-| `RERANKER` | `none` | **`vi`** (`AITeamVN/Vietnamese_Reranker`) · `bge` |
-| `TOKENIZER` | `regex` (test) | **`auto`** → `pyvi` (tách từ ghép "bất_động_sản") |
-| `DEDUP_BACKEND` | `local` (thuần Python) | `datasketch` (nhanh hơn ở quy mô) |
+| Biến               | Local / Dev                       | Production (khuyến nghị)                                                                                               |
+| ------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `LEXICAL_BACKEND` | `local` (BM25 thuần Python)    | `opensearch`                                                                                                           |
+| `VECTOR_BACKEND`  | `local` (brute-force cosine)    | `milvus` (chỉ mục **HNSW**)                                                                                    |
+| `EMBEDDER`        | `hash` (offline, deterministic) | **`vi`** (`AITeamVN/Vietnamese_Embedding` — VN chuyên biệt, **mặc định**) · `bge` · `openai` |
+| `RERANKER`        | `none`                          | **`vi`** (`AITeamVN/Vietnamese_Reranker`) · `bge`                                                           |
+| `TOKENIZER`       | `regex` (test)                  | **`auto`** → `pyvi` (tách từ ghép "bất_động_sản")                                                      |
+| `DEDUP_BACKEND`   | `local` (thuần Python)         | `datasketch` (nhanh hơn ở quy mô)                                                                                   |
 
 > **Nâng cấp tiếng Việt chuyên biệt** ([embeddings.py](news_search/index/embeddings.py) `VietnameseEmbedder`,
 > [rerank.py](news_search/search/rerank.py) `VietnameseReranker`): mô hình fine-tune từ
@@ -220,10 +220,10 @@ Tầng [`news_search/sources/`](news_search/sources/) trừu tượng hóa nơi 
 đến từ đâu — mọi nguồn trả về **dict thô** tương thích `normalize_article`, nên
 index/search không phụ thuộc nguồn. Chọn qua `SOURCE`:
 
-| `SOURCE` | Lớp | Mô tả |
-|---|---|---|
-| `sample` | `SampleJsonSource` | Đọc `data/sample_articles.json` (offline) |
-| `postgres` | `PostgresCMSSource` | CMS thật: `public.articles` + join category/author/tags |
+| `SOURCE`   | Lớp                  | Mô tả                                                   |
+| ------------ | --------------------- | --------------------------------------------------------- |
+| `sample`   | `SampleJsonSource`  | Đọc`data/sample_articles.json` (offline)              |
+| `postgres` | `PostgresCMSSource` | CMS thật:`public.articles` + join category/author/tags |
 
 `PostgresCMSSource` ánh xạ schema CMS (`articles.content` HTML → body, `publish_date`
 → published_at, category `is_major`, tác giả gộp từ `article_authors`), chỉ lấy bài
@@ -254,24 +254,25 @@ Các năng lực nâng cao đều là **feature flag**: mặc định TẮT/an t
 hành vi lõi, và **degrade gracefully** khi thiếu phụ thuộc (Redis/OpenSearch/
 OpenAI) thay vì crash. Bật qua `.env` (xem [.env.example](.env.example)).
 
-| Cờ | Mặc định | Tính năng | Module |
-|---|---|---|---|
-| `FEEDBACK_ENABLED` | off | **Log click/dwell** (GĐ1): `/search` trả `X-Search-Id`, `POST /events/click` ghi log; backend jsonl/redis; CTR/zero-result cho dashboard | [feedback/](news_search/feedback/) |
-| `QU_SPELLCORRECT` | off | **Sửa lỗi chính tả** (GĐ3): Norvig trên vocab corpus, chỉ sửa từ OOV | [understanding.py](news_search/search/understanding.py) |
-| `QU_EXPANSION` | off | **Mở rộng đồng nghĩa/alias** (GĐ3) | ↑ |
-| `QU_LLM_REWRITE` | off | **Viết lại truy vấn bằng LLM** (cần OpenAI key; thiếu -> bỏ qua) | ↑ |
-| `CACHE_ENABLED` | off | **Cache truy vấn nóng** (GĐ5): TTL+LRU memory / Redis; vô hiệu theo generation; bỏ qua tin nóng | [cache.py](news_search/service/cache.py) |
-| `METRICS_ENABLED` | **on** | **Metrics** (GĐ5): `/metrics` (Prometheus), p50/p95, error/zero-result/cache-hit rate | [metrics.py](news_search/service/metrics.py) |
-| `DASHBOARD_ENABLED` | on | **Dashboard HTML** `/dashboard` + cảnh báo ngưỡng (p95/error/zero-result) | ↑ |
-| `EXPERIMENT_ENABLED` | off | **A/B**: gán biến thể (`X-Variant`) + log để phân tích online | [app.py](news_search/api/app.py) |
-| `ADMIN_TOKEN` | (rỗng=tắt) | **Blue-green reindex** `POST /admin/reindex` (dựng chỉ mục mới rồi hoán đổi nguyên tử) | [search_service.py](news_search/service/search_service.py) |
-| `LEXICAL_BACKEND=opensearch` | local | **OpenSearch** BM25 production | [opensearch_lexical.py](news_search/index/opensearch_lexical.py) |
+| Cờ                            | Mặc định  | Tính năng                                                                                                                                            | Module                                                          |
+| ------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `FEEDBACK_ENABLED`           | off          | **Log click/dwell** (GĐ1): `/search` trả `X-Search-Id`, `POST /events/click` ghi log; backend jsonl/redis; CTR/zero-result cho dashboard | [feedback/](news_search/feedback/)                               |
+| `QU_SPELLCORRECT`            | off          | **Sửa lỗi chính tả** (GĐ3): Norvig trên vocab corpus, chỉ sửa từ OOV                                                                    | [understanding.py](news_search/search/understanding.py)          |
+| `QU_EXPANSION`               | off          | **Mở rộng đồng nghĩa/alias** (GĐ3)                                                                                                         | ↑                                                              |
+| `QU_LLM_REWRITE`             | off          | **Viết lại truy vấn bằng LLM** (cần OpenAI key; thiếu -> bỏ qua)                                                                          | ↑                                                              |
+| `CACHE_ENABLED`              | off          | **Cache truy vấn nóng** (GĐ5): TTL+LRU memory / Redis; vô hiệu theo generation; bỏ qua tin nóng                                           | [cache.py](news_search/service/cache.py)                         |
+| `METRICS_ENABLED`            | **on** | **Metrics** (GĐ5): `/metrics` (Prometheus), p50/p95, error/zero-result/cache-hit rate                                                         | [metrics.py](news_search/service/metrics.py)                     |
+| `DASHBOARD_ENABLED`          | on           | **Dashboard HTML** `/dashboard` + cảnh báo ngưỡng (p95/error/zero-result)                                                                  | ↑                                                              |
+| `EXPERIMENT_ENABLED`         | off          | **A/B**: gán biến thể (`X-Variant`) + log để phân tích online                                                                           | [app.py](news_search/api/app.py)                                 |
+| `ADMIN_TOKEN`                | (rỗng=tắt) | **Blue-green reindex** `POST /admin/reindex` (dựng chỉ mục mới rồi hoán đổi nguyên tử)                                               | [search_service.py](news_search/service/search_service.py)       |
+| `LEXICAL_BACKEND=opensearch` | local        | **OpenSearch** BM25 production                                                                                                                   | [opensearch_lexical.py](news_search/index/opensearch_lexical.py) |
 
 Ngoài ra: `IndexManager.snapshot(path)` / `restore(path)` cho **bền vững** (lưu bài
 gốc ra JSONL, dựng lại mọi chỉ mục khi phục hồi) — chống mất dữ liệu cho backend
 in-memory.
 
 Ví dụ bật vài tính năng:
+
 ```bash
 FEEDBACK_ENABLED=true CACHE_ENABLED=true QU_SPELLCORRECT=true \
   .venv\Scripts\python.exe -m uvicorn news_search.api.app:app --port 8000
