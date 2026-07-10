@@ -7,7 +7,11 @@ vấn trong lúc build vẫn phục vụ từ chỉ mục cũ, không gián đo�
 
 from __future__ import annotations
 
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import logging
+import itertools
 from threading import Lock
 from typing import Optional
 
@@ -47,14 +51,39 @@ class SearchService:
             new_manager = IndexManager(self.settings, embedder=self.manager.embedder)
             n = skipped = 0
             samples: list[str] = []
-            for raw in src.fetch_all(self.settings.ingest_batch_size):
+
+            def chunked(iterable, n):
+                it = iter(iterable)
+                while True:
+                    chunk = list(itertools.islice(it, n))
+                    if not chunk:
+                        break
+                    yield chunk
+
+            # Gom lô nhỏ (chunk) để tính embedding song song tối ưu và bulk insert
+            # Giảm xuống 16 bài để tránh lỗi CUDA Out of Memory trên GPU có VRAM nhỏ (4GB)
+            ingest_chunk_size = 16
+            for chunk in chunked(src.fetch_all(self.settings.ingest_batch_size), ingest_chunk_size):
+                if limit and n + len(chunk) > limit:
+                    chunk = chunk[:(limit - n)]
+                    if not chunk:
+                        break
+
                 try:
-                    new_manager.index_article(raw)
-                    n += 1
-                except Exception as exc:
-                    skipped += 1
-                    if len(samples) < 5:
-                        samples.append(f"{raw.get('article_id')}: {type(exc).__name__}: {exc}")
+                    n_added = new_manager.bulk_index(chunk)
+                    n += n_added
+                except Exception:
+                    print("  [LỖI] Bulk index thất bại, chạy từng bài...")
+                    # Fallback: chạy từng bài trong lô để bỏ qua bài lỗi và đếm chi tiết lỗi
+                    for raw in chunk:
+                        try:
+                            new_manager.index_article(raw)
+                            n += 1
+                        except Exception as exc:
+                            skipped += 1
+                            if len(samples) < 5:
+                                samples.append(f"{raw.get('article_id')}: {type(exc).__name__}: {exc}")
+
                 if limit and n >= limit:
                     break
         finally:

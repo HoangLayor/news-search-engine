@@ -130,6 +130,16 @@ class MilvusVectorIndex:
             data=[{"article_id": article_id, "vector": self._normalized(vector)}],
         )
 
+    def add_batch(self, article_ids: list[str], vectors: np.ndarray) -> None:
+        """Upsert nhiều vector cùng lúc. Lưu bản đã L2-normalize."""
+        if not article_ids:
+            return
+        data = [
+            {"article_id": aid, "vector": self._normalized(vec)}
+            for aid, vec in zip(article_ids, vectors)
+        ]
+        self._client.upsert(self.collection, data=data)
+
     def remove(self, article_id: str) -> None:
         """Xóa theo id; không tồn tại -> no-op."""
         self._client.delete(self.collection, ids=[article_id])

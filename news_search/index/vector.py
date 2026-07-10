@@ -54,6 +54,12 @@ class VectorIndex:
         self._vectors[article_id] = self._as_normalized(vector)
         self._matrix = None
 
+    def add_batch(self, article_ids: list[str], vectors: np.ndarray) -> None:
+        """Thêm nhiều vector cùng lúc; trùng id -> replace. Lưu bản L2-normalized."""
+        for aid, vec in zip(article_ids, vectors):
+            self._vectors[aid] = self._as_normalized(vec)
+        self._matrix = None
+
     def remove(self, article_id: str) -> None:
         """Gỡ vector; id không tồn tại -> no-op."""
         if self._vectors.pop(article_id, None) is not None:

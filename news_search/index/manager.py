@@ -60,11 +60,25 @@ class IndexManager:
         # ``embedder`` có thể được TIÊM để tái dùng (tránh nạp lại model ~GB khi
         # reindex blue-green — xem SearchService.reindex).
         self.store = ArticleStore()
+        
+        print("  -> Đang khởi tạo Lexical Index (BM25)...")
         self.lexical = get_lexical_index(self.settings)
-        self.embedder = embedder if embedder is not None else get_embedder(self.settings)
+        
+        if embedder is not None:
+            self.embedder = embedder
+        else:
+            print(f"  -> Đang tải mô hình Embedding ({self.settings.embedder}) - Có thể mất thời gian nếu tải lần đầu...")
+            self.embedder = get_embedder(self.settings)
+            
+        print(f"  -> Đang kết nối Vector Database ({self.settings.vector_backend})...")
         self.vector = get_vector_index(self.settings, self.embedder.dim)
+        
+        print("  -> Đang khởi tạo Deduper...")
         self.deduper = get_deduper(self.settings)
+        
+        print("  -> Đang khởi tạo Knowledge Graph...")
         self.kg = KnowledgeGraph()
+        
         # Bộ đếm thế hệ: tăng mỗi khi chỉ mục đổi -> dùng cho invalidation cache.
         self.generation = 0
 
@@ -78,33 +92,104 @@ class IndexManager:
           lỗi (vd Milvus từ chối) -> rollback toàn bộ để chỉ mục KHÔNG lệch pha.
         - Re-index cùng id an toàn: mọi chỉ mục con đều replace theo id.
         """
-        article = raw if isinstance(raw, Article) else normalize_article(raw)
-        aid = article.article_id
+        # 0. Chuẩn hóa bài viết
+        try:
+            article = raw if isinstance(raw, Article) else normalize_article(raw)
+            aid = article.article_id
+        except Exception as exc:
+            print(f"  [LỖI] Chuẩn hóa bài viết thất bại: {exc}")
+            raise
 
-        # Phần nặng/dễ lỗi tính TRƯỚC, ngoài vùng ghi (không để lại rác nếu lỗi ở đây)
-        vector = self.embedder.embed([article.text])[0]
-        entities = extract_entities(article.text)
+        # 1. Tính toán vector embedding
+        try:
+            vector = self.embedder.embed([article.text])[0]
+        except Exception as exc:
+            print(f"  [LỖI] Tính vector embedding thất bại cho bài {aid}: {exc}")
+            raise
 
+        # 2. Trích xuất thực thể (NER)
+        try:
+            entities = extract_entities(article.text)
+        except Exception as exc:
+            print(f"  [LỖI] Trích xuất thực thể thất bại cho bài {aid}: {exc}")
+            raise
+
+        # 3. Ghi vào các chỉ mục con
         try:
             self.store.put(article)
             self.lexical.add(article)
             self.vector.add(aid, vector)          # dễ lỗi nhất (Milvus dim/kết nối)
             self.deduper.add(aid, article.text)
             self.kg.add_article(aid, entities)
-        except Exception:
+        except Exception as exc:
+            print(f"  [LỖI] Ghi dữ liệu chỉ mục thất bại cho bài {aid}: {exc}")
             self._purge(aid)                      # dọn phần đã ghi -> không lệch pha
             raise
         self.generation += 1
         return article
 
     def bulk_index(self, raws: list[dict | Article]) -> int:
-        """Nạp một lô bài viết, trả số bài được index (published)."""
-        indexed = 0
-        for raw in raws:
-            article = self.index_article(raw)
-            if article.status == "published":
-                indexed += 1
-        return indexed
+        """Nạp một lô bài viết song song/tối ưu hơn — NGUYÊN TỬ CHO CẢ LÔ.
+
+        Tính embedding gộp một lần và ghi theo lô (nếu backend hỗ trợ).
+        """
+        if not raws:
+            return 0
+
+        # 1. Chuẩn hóa tất cả bài viết trong lô
+        try:
+            articles = [
+                raw if isinstance(raw, Article) else normalize_article(raw)
+                for raw in raws
+            ]
+            article_ids = [art.article_id for art in articles]
+        except Exception as exc:
+            print(f"  [LỖI LÔ] Chuẩn hóa lô bài viết thất bại: {exc}")
+            raise
+
+        # 2. Tạo vector embedding hàng loạt (tận dụng tối ưu song song hóa trên CPU/GPU)
+        texts = [art.text for art in articles]
+        try:
+            vectors = self.embedder.embed(texts)
+        except Exception as exc:
+            print(f"  [LỖI LÔ] Tạo vector embedding hàng loạt thất bại: {exc}")
+            raise
+
+        # 3. Trích xuất thực thể
+        try:
+            entities_list = [extract_entities(art.text) for art in articles]
+        except Exception as exc:
+            print(f"  [LỖI LÔ] Trích xuất thực thể hàng loạt thất bại: {exc}")
+            raise
+
+        # 4. Lưu trữ và lập chỉ mục con cục bộ (In-memory)
+        try:
+            for art, ent in zip(articles, entities_list):
+                self.store.put(art)
+                self.lexical.add(art)
+                self.deduper.add(art.article_id, art.text)
+                self.kg.add_article(art.article_id, ent)
+        except Exception as exc:
+            print(f"  [LỖI LÔ] Ghi các chỉ mục in-memory thất bại: {exc}")
+            for aid in article_ids:
+                self._purge(aid)
+            raise
+
+        # 5. Ghi lô vector (Milvus hoặc local)
+        try:
+            if hasattr(self.vector, "add_batch"):
+                self.vector.add_batch(article_ids, vectors)
+            else:
+                for aid, vec in zip(article_ids, vectors):
+                    self.vector.add(aid, vec)
+        except Exception as exc:
+            print(f"  [LỖI LÔ] Ghi lô vector (Milvus/local) thất bại: {exc}")
+            for aid in article_ids:
+                self._purge(aid)
+            raise
+
+        self.generation += 1
+        return sum(1 for art in articles if art.status == "published")
 
     def _purge(self, article_id: str) -> None:
         """Gỡ bài khỏi mọi chỉ mục con KHÔNG tăng generation (dùng nội bộ + rollback)."""
