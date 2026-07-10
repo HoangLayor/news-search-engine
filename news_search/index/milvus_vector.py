@@ -53,29 +53,63 @@ class MilvusVectorIndex:
             raise RuntimeError(f"Không kết nối/khởi tạo được Milvus: {exc}") from exc
 
     # ------------------------------------------------------------------ setup
-    def _ensure_collection(self, DataType, settings: Settings) -> None:
-        """Tạo collection + chỉ mục HNSW nếu chưa có; nạp vào bộ nhớ để search."""
-        client = self._client
-        if not client.has_collection(self.collection):
-            schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
-            schema.add_field("article_id", DataType.VARCHAR, is_primary=True, max_length=256)
-            schema.add_field("vector", DataType.FLOAT_VECTOR, dim=self.dim)
+    def _existing_dim(self) -> int | None:
+        """Số chiều của trường vector trong collection đã tồn tại (None nếu không rõ)."""
+        desc = self._client.describe_collection(self.collection)
+        for f in desc.get("fields", []):
+            dim = (f.get("params") or {}).get("dim")
+            if dim is not None:
+                return int(dim)
+        return None
 
-            index_params = client.prepare_index_params()
-            index_params.add_index(
-                field_name="vector",
-                index_type="HNSW",  # <-- HNSW
-                metric_type=self.metric,
-                params={
-                    "M": settings.hnsw_m,
-                    "efConstruction": settings.hnsw_ef_construction,
-                },
-            )
-            client.create_collection(
-                collection_name=self.collection,
-                schema=schema,
-                index_params=index_params,
-            )
+    def _create_collection(self, DataType, settings: Settings) -> None:
+        """Tạo collection mới với chỉ mục HNSW theo cấu hình."""
+        client = self._client
+        schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
+        schema.add_field("article_id", DataType.VARCHAR, is_primary=True, max_length=256)
+        schema.add_field("vector", DataType.FLOAT_VECTOR, dim=self.dim)
+
+        index_params = client.prepare_index_params()
+        index_params.add_index(
+            field_name="vector",
+            index_type="HNSW",  # <-- HNSW
+            metric_type=self.metric,
+            params={
+                "M": settings.hnsw_m,
+                "efConstruction": settings.hnsw_ef_construction,
+            },
+        )
+        client.create_collection(
+            collection_name=self.collection,
+            schema=schema,
+            index_params=index_params,
+        )
+
+    def _ensure_collection(self, DataType, settings: Settings) -> None:
+        """Tạo collection + chỉ mục HNSW nếu chưa có; nạp vào bộ nhớ để search.
+
+        Nếu collection ĐÃ TỒN TẠI với dim KHÁC embedder hiện tại: mặc định raise
+        lỗi rõ ràng (nếu không, Milvus sẽ từ chối MỌI insert và — do reindex nuốt
+        exception — bạn chỉ thấy "0 bài" mà không biết vì sao). Đặt
+        ``MILVUS_RECREATE_ON_DIM_MISMATCH=true`` để tự động drop + tạo lại.
+        """
+        client = self._client
+        if client.has_collection(self.collection):
+            existing = self._existing_dim()
+            if existing is not None and existing != self.dim:
+                if not settings.milvus_recreate_on_dim_mismatch:
+                    raise RuntimeError(
+                        f"Collection '{self.collection}' có dim={existing} nhưng embedder "
+                        f"({settings.embedder}) sinh vector dim={self.dim}. Milvus sẽ từ chối "
+                        f"mọi insert. Cách xử lý: (a) đổi EMBEDDER cho khớp dim={existing}, "
+                        f"(b) đổi MILVUS_COLLECTION sang tên mới, hoặc "
+                        f"(c) đặt MILVUS_RECREATE_ON_DIM_MISMATCH=true để DROP + tạo lại "
+                        f"(XÓA toàn bộ vector cũ)."
+                    )
+                client.drop_collection(self.collection)
+                self._create_collection(DataType, settings)
+        else:
+            self._create_collection(DataType, settings)
         client.load_collection(self.collection)
 
     # ------------------------------------------------------------------ utils

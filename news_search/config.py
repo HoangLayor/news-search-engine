@@ -88,6 +88,11 @@ class Settings:
     milvus_token: str = field(default_factory=lambda: _env("MILVUS_TOKEN", ""))
     milvus_collection: str = field(default_factory=lambda: _env("MILVUS_COLLECTION", "news_articles"))
     milvus_metric: str = field(default_factory=lambda: _env("MILVUS_METRIC", "COSINE"))
+    # Collection đã tồn tại nhưng dim khác embedder -> mặc định BÁO LỖI rõ ràng.
+    # Đặt true để TỰ ĐỘNG DROP + tạo lại (PHÁ HỦY dữ liệu vector cũ).
+    milvus_recreate_on_dim_mismatch: bool = field(
+        default_factory=lambda: _env_bool("MILVUS_RECREATE_ON_DIM_MISMATCH", False)
+    )
     hnsw_m: int = field(default_factory=lambda: _env_int("HNSW_M", 16))
     hnsw_ef_construction: int = field(default_factory=lambda: _env_int("HNSW_EF_CONSTRUCTION", 200))
     hnsw_ef_search: int = field(default_factory=lambda: _env_int("HNSW_EF_SEARCH", 64))
