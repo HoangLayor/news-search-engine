@@ -54,12 +54,14 @@ class ArticleStore:
 class IndexManager:
     """Nạp & đồng bộ bài viết xuống toàn bộ chỉ mục (F-01, F-08)."""
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, embedder=None) -> None:
         self.settings = settings or Settings.from_env()
-        # F-01: khởi tạo sẵn mọi kho lưu trữ trước khi index
+        # F-01: khởi tạo sẵn mọi kho lưu trữ trước khi index.
+        # ``embedder`` có thể được TIÊM để tái dùng (tránh nạp lại model ~GB khi
+        # reindex blue-green — xem SearchService.reindex).
         self.store = ArticleStore()
         self.lexical = get_lexical_index(self.settings)
-        self.embedder = get_embedder(self.settings)
+        self.embedder = embedder if embedder is not None else get_embedder(self.settings)
         self.vector = get_vector_index(self.settings, self.embedder.dim)
         self.deduper = get_deduper(self.settings)
         self.kg = KnowledgeGraph()
@@ -69,21 +71,29 @@ class IndexManager:
     # ------------------------------------------------------------------ index
 
     def index_article(self, raw: dict | Article) -> Article:
-        """Chuẩn hóa (nếu cần) rồi ghi bài vào mọi chỉ mục.
+        """Chuẩn hóa (nếu cần) rồi ghi bài vào mọi chỉ mục — NGUYÊN TỬ.
 
         - ``dict`` -> ``normalize_article`` (F-02); ``Article`` dùng trực tiếp.
-        - status != "published" (gỡ/ẩn) -> ``remove_article`` rồi trả về (F-08).
+        - Tính vector + thực thể TRƯỚC khi chạm chỉ mục; nếu bất kỳ bước ghi nào
+          lỗi (vd Milvus từ chối) -> rollback toàn bộ để chỉ mục KHÔNG lệch pha.
         - Re-index cùng id an toàn: mọi chỉ mục con đều replace theo id.
         """
         article = raw if isinstance(raw, Article) else normalize_article(raw)
-
         aid = article.article_id
-        self.store.put(article)
-        self.lexical.add(article)
+
+        # Phần nặng/dễ lỗi tính TRƯỚC, ngoài vùng ghi (không để lại rác nếu lỗi ở đây)
         vector = self.embedder.embed([article.text])[0]
-        self.vector.add(aid, vector)
-        self.deduper.add(aid, article.text)
-        self.kg.add_article(aid, extract_entities(article.text))
+        entities = extract_entities(article.text)
+
+        try:
+            self.store.put(article)
+            self.lexical.add(article)
+            self.vector.add(aid, vector)          # dễ lỗi nhất (Milvus dim/kết nối)
+            self.deduper.add(aid, article.text)
+            self.kg.add_article(aid, entities)
+        except Exception:
+            self._purge(aid)                      # dọn phần đã ghi -> không lệch pha
+            raise
         self.generation += 1
         return article
 
@@ -96,13 +106,17 @@ class IndexManager:
                 indexed += 1
         return indexed
 
-    def remove_article(self, article_id: str) -> None:
-        """Gỡ bài khỏi MỌI chỉ mục (F-08) — store, lexical, vector, dedup, kg."""
+    def _purge(self, article_id: str) -> None:
+        """Gỡ bài khỏi mọi chỉ mục con KHÔNG tăng generation (dùng nội bộ + rollback)."""
         self.store.delete(article_id)
         self.lexical.remove(article_id)
         self.vector.remove(article_id)
         self.deduper.remove(article_id)
         self.kg.remove_article(article_id)
+
+    def remove_article(self, article_id: str) -> None:
+        """Gỡ bài khỏi MỌI chỉ mục (F-08) — store, lexical, vector, dedup, kg."""
+        self._purge(article_id)
         self.generation += 1
 
     # -------------------------------------------------------------- bền vững

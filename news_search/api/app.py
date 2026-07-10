@@ -259,7 +259,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not hmac.compare_digest(x_admin_token, settings.admin_token):
             raise HTTPException(status_code=403, detail="token admin không đúng")
         limit = payload.get("limit")
-        n = svc.reindex(limit=int(limit) if limit else None)
+        try:
+            n = svc.reindex(limit=int(limit) if limit else None)
+        except Exception as exc:  # nguồn hỏng / Milvus dim mismatch / psycopg thiếu...
+            _log.exception("Reindex thất bại")
+            raise HTTPException(status_code=500,
+                                detail=f"Reindex thất bại: {type(exc).__name__}: {exc}") from exc
         return {"reindexed": n, "generation": svc.manager.generation}
 
     @app.get("/healthz")

@@ -26,10 +26,13 @@ from news_search.service.cache import get_cache
 class SearchPipeline:
     """Điều phối tìm kiếm end-to-end trên các chỉ mục của IndexManager."""
 
-    def __init__(self, manager: IndexManager, settings: Settings | None = None) -> None:
+    def __init__(self, manager: IndexManager, settings: Settings | None = None,
+                 reranker=None) -> None:
         self.manager = manager
         self.settings = settings or manager.settings
-        self.reranker = get_reranker(self.settings)
+        # ``reranker`` có thể được TIÊM để tái dùng (tránh nạp lại model VN ~GB
+        # khi reindex blue-green — xem SearchService.reindex).
+        self.reranker = reranker if reranker is not None else get_reranker(self.settings)
         # (GĐ3) Query understanding — vocab lấy lười từ chỉ mục BM25.
         self.understander = QueryUnderstander(
             self.settings, vocab_provider=lambda: self.manager.lexical.vocab_frequencies()
