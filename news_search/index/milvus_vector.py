@@ -193,5 +193,14 @@ class MilvusVectorIndex:
         return out
 
     def __len__(self) -> int:
-        stats = self._client.get_collection_stats(self.collection)
-        return int(stats.get("row_count", 0))
+        """Số entity SỐNG (query count(*)), KHÔNG dùng get_collection_stats.row_count.
+
+        ``row_count`` đếm cả bản ghi đã xóa mềm / upsert CHƯA compaction -> phồng &
+        cũ (vd hiển thị 331 trong khi thực tế chỉ ~99 entity sống). ``count(*)`` cho
+        số sống chính xác.
+        """
+        try:
+            rows = self._client.query(self.collection, filter="", output_fields=["count(*)"])
+            return int(rows[0]["count(*)"]) if rows else 0
+        except Exception:
+            return 0
