@@ -139,6 +139,29 @@ class SearchPipeline:
                 self._append(trace, "empty", "Kết quả", "Không có ứng viên nào khớp")
             return []
 
+        # 4b. Store LAZY (vd OpenSearch): preload ứng viên (batch) rồi lọc TRÊN TẬP
+        # ỨNG VIÊN — (a) bỏ id "mồ côi" không dựng lại được (tránh crash time-decay),
+        # (b) áp bộ lọc metadata (status/category...) mà filter_ids không pre-lọc
+        # được khi lazy -> KHÔNG rò rỉ bài unpublished. Local (không lazy) bỏ qua.
+        if self.manager.store.lazy:
+            self.manager.store.preload(list(base_scores))
+            active = not query.filters.is_empty()
+            kept: dict[str, float] = {}
+            for aid, s in base_scores.items():
+                art = self.manager.store.get(aid)
+                if art is None:
+                    continue  # (có trong Milvus/BM25 nhưng không dựng lại được)
+                if active and not query.filters.matches(art):
+                    continue
+                kept[aid] = s
+            if explain:
+                self._append(trace, "filter_post", "2b. Lọc metadata (post-retrieval, store lazy)",
+                             f"{len(base_scores)} → {len(kept)} bài (bỏ mồ côi + lọc metadata)",
+                             self._trace_items(sorted(kept.items(), key=lambda kv: -kv[1])), len(kept))
+            base_scores = kept
+            if not base_scores:
+                return []
+
         # 5. Time-decay / QDF (F-13)
         now = query.now or datetime.now(timezone.utc)
         half_life = cfg.fresh_half_life_days if parsed.fresh_intent else cfg.half_life_days

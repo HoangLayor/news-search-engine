@@ -22,9 +22,41 @@ services:
       CACHE_BACKEND: "${CACHE_BACKEND:-memory}"
       FEEDBACK_BACKEND: "${FEEDBACK_BACKEND:-jsonl}"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      # Ép chạy trên CPU trong Docker vì container chỉ cài PyTorch bản CPU
+      BGE_DEVICE: ""
+      # Chỉ định địa chỉ mạng nội bộ cho OpenSearch khi chạy trong Compose
+      OPENSEARCH_URL: "http://opensearch:9200"
     volumes:
       - feedback:/app/data/feedback   # giữ lại log click giữa các lần chạy
       - hf_cache:/app/.venv/huggingface_cache # Lưu model tải về vĩnh viễn
+    restart: unless-stopped
+
+  # --- OpenSearch (BM25 Production) ---
+  opensearch:
+    image: opensearchproject/opensearch:latest
+    container_name: news-search-engine-opensearch
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"  # Giới hạn RAM tiết kiệm cho máy dev
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    restart: unless-stopped
+
+  # --- OpenSearch Dashboards (Giao diện đồ họa quan sát Kibana cho OpenSearch) ---
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:latest
+    container_name: news-search-engine-opensearch-dashboards
+    ports:
+      - "5601:5601"
+    environment:
+      - OPENSEARCH_HOSTS=http://opensearch:9200
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    depends_on:
+      - opensearch
     restart: unless-stopped
 
   # --- Tùy chọn (profile full): Redis cho cache & feedback dùng chung ---
@@ -46,3 +78,4 @@ services:
 volumes:
   feedback:
   hf_cache:
+  opensearch-data:

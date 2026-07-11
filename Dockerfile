@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 RUN pip install --no-cache-dir \
     "fastapi>=0.115" "uvicorn>=0.30" "pydantic>=2.7" "numpy>=1.26" "python-dotenv>=1.0" \
     "pymilvus>=2.4" "redis>=5.0" "sentence-transformers" "datasketch" \
-    "sentencepiece" "protobuf" "pyvi" "psycopg[binary]>=3.1"
+    "sentencepiece" "protobuf" "pyvi" "psycopg[binary]>=3.1" "opensearch-py"
 
 # Copy mã nguồn (bao gồm data/sample_articles.json, news_search/api/ui.html)
 COPY news_search/ ./news_search/

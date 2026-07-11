@@ -25,23 +25,53 @@ from news_search.models import Article, SearchFilters
 
 
 class ArticleStore:
-    """Kho bài viết gốc (in-memory) phục vụ lọc metadata + dựng snippet."""
+    """Kho bài viết gốc phục vụ lọc metadata + dựng snippet.
 
-    def __init__(self) -> None:
+    Hai chế độ:
+    - **Authoritative** (mặc định, backend local): giữ toàn bộ Article trong RAM;
+      ``filter_ids`` duyệt được toàn store.
+    - **Lazy** (khi có ``loader``, vd backend OpenSearch bền vững): RAM chỉ là
+      CACHE; ``get`` miss -> nạp theo id từ nguồn bền vững; ``filter_ids`` trả None
+      (không duyệt được toàn bộ) -> pipeline lọc post-retrieval trên tập ứng viên.
+      Nhờ vậy app khởi động lại KHÔNG cần nạp lại toàn bộ RAM / reindex.
+    """
+
+    def __init__(self, loader=None, batch_loader=None) -> None:
         self._articles: dict[str, Article] = {}
+        self._loader = loader              # Callable[[str], Article | None]
+        self._batch_loader = batch_loader  # Callable[[list[str]], dict[str, Article]]
+
+    @property
+    def lazy(self) -> bool:
+        return self._loader is not None
 
     def put(self, article: Article) -> None:
         self._articles[article.article_id] = article
 
     def get(self, article_id: str) -> Article | None:
-        return self._articles.get(article_id)
+        art = self._articles.get(article_id)
+        if art is None and self._loader is not None:
+            art = self._loader(article_id)   # lazy: nạp từ backend bền vững
+            if art is not None:
+                self._articles[article_id] = art  # cache lại
+        return art
+
+    def preload(self, ids) -> None:
+        """Nạp trước (batch) các id còn thiếu vào cache — tránh N round-trip khi lọc."""
+        if self._batch_loader is None:
+            return
+        missing = [i for i in ids if i not in self._articles]
+        if missing:
+            for aid, art in self._batch_loader(missing).items():
+                if art is not None:
+                    self._articles[aid] = art
 
     def delete(self, article_id: str) -> None:
         self._articles.pop(article_id, None)
 
     def filter_ids(self, filters: SearchFilters) -> set[str] | None:
-        """Trả tập id thỏa bộ lọc; None nếu filters rỗng (không thu hẹp)."""
-        if filters.is_empty():
+        """Tập id thỏa lọc; None nếu filters rỗng HOẶC store lazy (không duyệt được)."""
+        if self._loader is not None or filters.is_empty():
             return None
         return {
             aid for aid, art in self._articles.items() if filters.matches(art)
@@ -59,11 +89,18 @@ class IndexManager:
         # F-01: khởi tạo sẵn mọi kho lưu trữ trước khi index.
         # ``embedder`` có thể được TIÊM để tái dùng (tránh nạp lại model ~GB khi
         # reindex blue-green — xem SearchService.reindex).
-        self.store = ArticleStore()
-        
         print("  -> Đang khởi tạo Lexical Index (BM25)...")
         self.lexical = get_lexical_index(self.settings)
-        
+
+        # ArticleStore LAZY nếu backend lexical bền vững (OpenSearch) hỗ trợ get/mget
+        # -> app khởi động lại không cần nạp lại RAM. Local -> in-memory như cũ.
+        loader = getattr(self.lexical, "get", None)
+        batch_loader = getattr(self.lexical, "mget", None)
+        self.store = ArticleStore(
+            loader=loader if callable(loader) else None,
+            batch_loader=batch_loader if callable(batch_loader) else None,
+        )
+
         if embedder is not None:
             self.embedder = embedder
         else:

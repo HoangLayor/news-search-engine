@@ -22,7 +22,7 @@ from typing import Optional
 
 _log = logging.getLogger(__name__)
 
-from fastapi import Body, FastAPI, Header, HTTPException, Query, Response
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Response, BackgroundTasks
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from news_search.config import Settings
@@ -249,23 +249,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/admin/reindex")
     def admin_reindex(
+        background_tasks: BackgroundTasks,
         payload: dict = Body(default={}),
         x_admin_token: str = Header(default=""),
     ) -> dict:
-        """Reindex blue-green từ nguồn cấu hình. Tắt nếu ADMIN_TOKEN rỗng; sai token -> 403."""
+        """Reindex blue-green từ nguồn cấu hình chạy ngầm (asynchronous)."""
         if not settings.admin_token:
             raise HTTPException(status_code=404, detail="admin đã tắt (đặt ADMIN_TOKEN để bật)")
         # So sánh constant-time -> tránh rò rỉ token qua kênh thời gian
         if not hmac.compare_digest(x_admin_token, settings.admin_token):
             raise HTTPException(status_code=403, detail="token admin không đúng")
+            
+        if svc.reindex_progress["status"] == "indexing":
+            raise HTTPException(status_code=409, detail="Một tiến trình reindex khác đang chạy ngầm, vui lòng đợi.")
+
         limit = payload.get("limit")
-        try:
-            n = svc.reindex(limit=int(limit) if limit else None)
-        except Exception as exc:  # nguồn hỏng / Milvus dim mismatch / psycopg thiếu...
-            _log.exception("Reindex thất bại")
-            raise HTTPException(status_code=500,
-                                detail=f"Reindex thất bại: {type(exc).__name__}: {exc}") from exc
-        return {"reindexed": n, "generation": svc.manager.generation}
+        limit_val = int(limit) if limit else None
+        
+        # Đẩy quá trình reindex vào hàng đợi BackgroundTasks của FastAPI
+        background_tasks.add_task(svc.reindex, limit=limit_val)
+        return {"status": "started"}
+
+    @app.get("/admin/reindex/status")
+    def admin_reindex_status(
+        x_admin_token: str = Header(default=""),
+    ) -> dict:
+        """Lấy trạng thái và tiến trình reindex hiện tại phục vụ polling."""
+        if not settings.admin_token:
+            raise HTTPException(status_code=404, detail="admin đã tắt (đặt ADMIN_TOKEN để bật)")
+        # So sánh constant-time -> tránh rò rỉ token qua kênh thời gian
+        if not hmac.compare_digest(x_admin_token, settings.admin_token):
+            raise HTTPException(status_code=403, detail="token admin không đúng")
+        return svc.reindex_progress
 
     @app.get("/healthz")
     def healthz() -> dict:

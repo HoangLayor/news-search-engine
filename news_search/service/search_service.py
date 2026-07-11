@@ -12,6 +12,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import logging
 import itertools
+import time
 from threading import Lock
 from typing import Optional
 
@@ -35,6 +36,16 @@ class SearchService:
         self._lock = Lock()
         self.manager = IndexManager(settings)
         self.pipeline = SearchPipeline(self.manager, settings)
+        # Dictionary lưu trạng thái tiến trình phục vụ UI/API polling
+        self.reindex_progress = {
+            "status": "idle",  # "idle" | "indexing" | "success" | "failed"
+            "processed": 0,
+            "total": 0,
+            "skipped": 0,
+            "error_msg": None,
+            "elapsed_seconds": 0.0,
+            "speed": 0.0
+        }
 
     def reindex(self, source=None, limit: Optional[int] = None) -> int:
         """Blue-green: build chỉ mục mới từ nguồn rồi swap. Trả số bài đã index.
@@ -44,9 +55,35 @@ class SearchService:
         - Lỗi index từng bài được ĐẾM + LOG (không nuốt im lặng); nếu cả đợt lỗi
           -> log ERROR để lộ nguyên nhân (vd dim mismatch, Milvus từ chối).
         """
+        self.reindex_progress.update({
+            "status": "indexing",
+            "processed": 0,
+            "total": 0,
+            "skipped": 0,
+            "error_msg": None,
+            "elapsed_seconds": 0.0,
+            "speed": 0.0
+        })
+        t0 = time.perf_counter()
+
         # Mở nguồn trước (raise sớm nếu psycopg thiếu / DB không kết nối được)
-        src = source or get_source(self.settings)
         try:
+            src = source or get_source(self.settings)
+        except Exception as exc:
+            self.reindex_progress.update({
+                "status": "failed",
+                "error_msg": f"Không kết nối được nguồn dữ liệu: {type(exc).__name__}: {exc}"
+            })
+            raise
+
+        try:
+            # Thử lấy tổng số bài để phục vụ phần trăm tiến độ
+            try:
+                total_count = src.count()
+                self.reindex_progress["total"] = limit if (limit and limit < total_count) else total_count
+            except Exception:
+                pass
+
             # Tái dùng model nặng của chỉ mục hiện hành -> không nhân đôi RAM
             new_manager = IndexManager(self.settings, embedder=self.manager.embedder)
             n = skipped = 0
@@ -73,7 +110,6 @@ class SearchService:
                     n_added = new_manager.bulk_index(chunk)
                     n += n_added
                 except Exception:
-                    print("  [LỖI] Bulk index thất bại, chạy từng bài...")
                     # Fallback: chạy từng bài trong lô để bỏ qua bài lỗi và đếm chi tiết lỗi
                     for raw in chunk:
                         try:
@@ -84,8 +120,23 @@ class SearchService:
                             if len(samples) < 5:
                                 samples.append(f"{raw.get('article_id')}: {type(exc).__name__}: {exc}")
 
+                # Cập nhật trạng thái tiến độ thời gian thực
+                elapsed = time.perf_counter() - t0
+                self.reindex_progress.update({
+                    "processed": n,
+                    "skipped": skipped,
+                    "elapsed_seconds": elapsed,
+                    "speed": n / elapsed if elapsed > 0 else 0.0
+                })
+
                 if limit and n >= limit:
                     break
+        except Exception as exc:
+            self.reindex_progress.update({
+                "status": "failed",
+                "error_msg": f"Lỗi trong quá trình index: {type(exc).__name__}: {exc}"
+            })
+            raise
         finally:
             if source is None:
                 src.close()
@@ -102,4 +153,11 @@ class SearchService:
             self.manager = new_manager
             self.pipeline = SearchPipeline(new_manager, self.settings,
                                            reranker=self.pipeline.reranker)
+        
+        self.reindex_progress.update({
+            "status": "success",
+            "processed": n,
+            "skipped": skipped,
+            "elapsed_seconds": time.perf_counter() - t0
+        })
         return n

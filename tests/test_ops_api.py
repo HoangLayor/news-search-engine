@@ -72,7 +72,9 @@ def test_admin_reindex_disabled_and_token():
     c2 = _client(admin_token="secret", source="sample")
     assert c2.post("/admin/reindex", json={}, headers={"X-Admin-Token": "wrong"}).status_code == 403
     ok = c2.post("/admin/reindex", json={"limit": 10}, headers={"X-Admin-Token": "secret"})
-    assert ok.status_code == 200 and ok.json()["reindexed"] >= 1
+    assert ok.status_code == 200 and ok.json()["status"] == "started"
+    st = c2.get("/admin/reindex/status", headers={"X-Admin-Token": "secret"})
+    assert st.status_code == 200 and st.json()["processed"] >= 1
 
 
 def test_healthz_features():

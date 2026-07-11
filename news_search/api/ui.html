@@ -299,15 +299,59 @@ $("addForm").addEventListener("submit", async (e)=>{
   }catch(e){ msg.className="msg err"; msg.textContent="Lỗi: "+e.message; }
 });
 
+let reindexInterval = null;
 $("btnReindex").addEventListener("click", async ()=>{
-  const msg=$("adminMsg"); msg.className="msg"; msg.textContent="Đang reindex…";
+  const msg=$("adminMsg"); msg.className="msg"; msg.textContent="Đang gửi yêu cầu reindex…";
+  const token = $("adminToken").value;
   try{
     const r = await fetch("/admin/reindex",{method:"POST",
-      headers:{"Content-Type":"application/json","X-Admin-Token":$("adminToken").value},
+      headers:{"Content-Type":"application/json","X-Admin-Token":token},
       body: JSON.stringify({})});
     const d = await r.json();
     if(!r.ok) throw new Error(detailMsg(d.detail)||("HTTP "+r.status));
-    msg.textContent = `Reindex ${d.reindexed} bài (gen ${d.generation})`; refreshStats();
+    
+    msg.textContent = "Đang khởi tạo chỉ mục nền…";
+    if(reindexInterval) clearInterval(reindexInterval);
+    
+    // Poll trạng thái reindex mỗi 1 giây
+    reindexInterval = setInterval(async () => {
+      try {
+        const rs = await fetch("/admin/reindex/status", {
+          headers: {"X-Admin-Token": token}
+        });
+        const ds = await rs.json();
+        if(!rs.ok) throw new Error(detailMsg(ds.detail)||("HTTP "+rs.status));
+        
+        if (ds.status === "indexing") {
+          let progress = "Đang reindex: ";
+          if (ds.total > 0) {
+            const pct = ((ds.processed / ds.total) * 100).toFixed(1);
+            progress += `${ds.processed}/${ds.total} bài (${pct}%)`;
+          } else {
+            progress += `${ds.processed} bài`;
+          }
+          if (ds.speed > 0) {
+            progress += ` · Tốc độ: ${ds.speed.toFixed(1)} bài/s`;
+          }
+          if (ds.skipped > 0) {
+            progress += ` · Bỏ qua: ${ds.skipped}`;
+          }
+          msg.textContent = progress;
+        } else if (ds.status === "success") {
+          clearInterval(reindexInterval);
+          msg.textContent = `Thành công: đã nạp ${ds.processed} bài (bỏ qua ${ds.skipped} bài lỗi).`;
+          refreshStats();
+        } else if (ds.status === "failed") {
+          clearInterval(reindexInterval);
+          msg.className = "msg err";
+          msg.textContent = "Lỗi: " + ds.error_msg;
+        }
+      } catch (e) {
+        clearInterval(reindexInterval);
+        msg.className = "msg err";
+        msg.textContent = "Lỗi polling: " + e.message;
+      }
+    }, 1000);
   }catch(e){ msg.className="msg err"; msg.textContent="Lỗi: "+e.message; }
 });
 

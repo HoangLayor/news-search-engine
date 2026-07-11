@@ -10,11 +10,16 @@ Chưa có test offline. Tiêu đề nhân trọng số bằng ``title^3`` trong 
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from news_search.config import Settings
+from news_search.ingest.cleaner import TZ_VN
 from news_search.models import Article
 
 # Ánh xạ (mapping) + analyzer: dùng phân tích unicode/ICU nếu có; mặc định standard
 # đã đủ tách theo khoảng trắng cho tiếng Việt (âm tiết rời).
+# LƯU: lưu ĐỦ field của Article (kể cả url/tags) để OpenSearch làm NGUỒN SỰ THẬT —
+# app khởi động lại có thể dựng lại Article từ OpenSearch (stateless, không reindex).
 _INDEX_BODY = {
     "settings": {
         "index": {"number_of_shards": 1, "number_of_replicas": 1},
@@ -29,14 +34,39 @@ _INDEX_BODY = {
         "properties": {
             "title": {"type": "text", "analyzer": "vi_analyzer"},
             "body": {"type": "text", "analyzer": "vi_analyzer"},
+            "url": {"type": "keyword", "index": False},   # chỉ lưu để dựng lại, không search
             "published_at": {"type": "date"},
             "author": {"type": "keyword"},
             "category": {"type": "keyword"},
             "source": {"type": "keyword"},
             "status": {"type": "keyword"},
+            "tags": {"type": "keyword"},
         }
     },
 }
+
+
+def _doc_to_article(article_id: str, src: dict) -> Article:
+    """Dựng lại Article từ _source của OpenSearch (nguồn sự thật khi khởi động lại)."""
+    pub = src.get("published_at")
+    try:
+        published_at = datetime.fromisoformat(pub) if pub else datetime.now(TZ_VN)
+    except (TypeError, ValueError):
+        published_at = datetime.now(TZ_VN)
+    if published_at.tzinfo is None:
+        published_at = published_at.replace(tzinfo=TZ_VN)
+    return Article(
+        article_id=article_id,
+        title=src.get("title") or "",
+        body=src.get("body") or "",
+        url=src.get("url") or "",
+        published_at=published_at,
+        author=src.get("author"),
+        category=src.get("category"),
+        source=src.get("source"),
+        status=src.get("status") or "published",
+        tags=list(src.get("tags") or []),
+    )
 
 
 class OpenSearchLexicalIndex:
@@ -57,8 +87,8 @@ class OpenSearchLexicalIndex:
         try:
             self._os = OpenSearch(hosts=[settings.opensearch_url], http_auth=auth,
                                   timeout=10, max_retries=2, retry_on_timeout=True)
-            if not self._os.indices.exists(self.index):
-                self._os.indices.create(self.index, body=_INDEX_BODY)
+            if not self._os.indices.exists(index=self.index):
+                self._os.indices.create(index=self.index, body=_INDEX_BODY)
         except RuntimeError:
             raise
         except Exception as exc:  # pragma: no cover
@@ -66,11 +96,40 @@ class OpenSearchLexicalIndex:
 
     def add(self, article: Article) -> None:
         self._os.index(index=self.index, id=article.article_id, body={
-            "title": article.title, "body": article.body,
+            "title": article.title, "body": article.body, "url": article.url,
             "published_at": article.published_at.isoformat(),
             "author": article.author, "category": article.category,
             "source": article.source, "status": article.status,
+            "tags": article.tags,
         }, refresh=True)
+
+    def get(self, article_id: str) -> Article | None:
+        """Đọc 1 bài từ OpenSearch (nguồn sự thật) -> Article; không có -> None.
+
+        Cho phép ArticleStore lazy-load: app khởi động lại KHÔNG cần nạp lại RAM,
+        chỉ lấy bài theo id khi hiển thị kết quả.
+        """
+        try:
+            doc = self._os.get(index=self.index, id=article_id)
+        except Exception:
+            return None
+        if not doc or not doc.get("found"):
+            return None
+        return _doc_to_article(article_id, doc.get("_source") or {})
+
+    def mget(self, ids: list[str]) -> dict[str, Article]:
+        """Lấy NHIỀU bài trong 1 request (batch) -> {id: Article}. Tránh N round-trip."""
+        if not ids:
+            return {}
+        try:
+            resp = self._os.mget(index=self.index, body={"ids": list(ids)})
+        except Exception:
+            return {}
+        out: dict[str, Article] = {}
+        for d in resp.get("docs", []):
+            if d.get("found"):
+                out[d["_id"]] = _doc_to_article(d["_id"], d.get("_source") or {})
+        return out
 
     def update(self, article: Article) -> None:
         self.add(article)
