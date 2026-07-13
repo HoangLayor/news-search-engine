@@ -33,14 +33,14 @@ def test_explain_hybrid_has_all_steps():
     out = p.explain(SearchQuery("lạm phát", mode="hybrid", top_k=3, now=NOW))
     assert {"query", "mode", "top_k", "results", "trace"} <= set(out)
     keys = [st["key"] for st in out["trace"]]
-    for k in ("understand", "filter", "lexical", "dense", "fusion",
+    for k in ("understand", "filter", "fusion",
               "decay", "rerank", "dedup", "mmr", "final"):
         assert k in keys, f"thiếu bước {k}"
     # step đánh số tăng dần 1..n
     assert [st["step"] for st in out["trace"]] == list(range(1, len(out["trace"]) + 1))
     # mỗi bước có title; bước truy hồi có items kèm điểm
-    lex = next(st for st in out["trace"] if st["key"] == "lexical")
-    assert lex["items"] and "score" in lex["items"][0] and "title" in lex["items"][0]
+    fusion = next(st for st in out["trace"] if st["key"] == "fusion")
+    assert fusion["items"] and "score" in fusion["items"][0] and "title" in fusion["items"][0]
 
 
 def test_explain_matches_search():

@@ -1,369 +1,719 @@
 <!doctype html>
 <html lang="vi">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>News Search Engine — Demo</title>
-<style>
-  :root{
-    --bg:#f6f7f9; --card:#fff; --fg:#1c2024; --muted:#6b7280; --line:#e5e7eb;
-    --accent:#2563eb; --accent-fg:#fff; --ok:#16a34a; --warn:#d97706; --err:#dc2626;
-    --chip:#eef2ff; --chip-fg:#3730a3;
-  }
-  @media (prefers-color-scheme: dark){
-    :root{ --bg:#0f1216; --card:#171b21; --fg:#e6e8eb; --muted:#9aa4b2; --line:#2a2f37;
-           --accent:#3b82f6; --chip:#1e253a; --chip-fg:#a5b4fc; }
-  }
-  *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--fg);line-height:1.5}
-  a{color:var(--accent);text-decoration:none}
-  a:hover{text-decoration:underline}
-  header{background:var(--card);border-bottom:1px solid var(--line);padding:.8rem 1.2rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
-  header h1{font-size:1.15rem;margin:0}
-  .dot{width:.6rem;height:.6rem;border-radius:50%;background:var(--muted);display:inline-block;margin-right:.35rem}
-  .dot.ok{background:var(--ok)} .dot.err{background:var(--err)}
-  .badges{margin-left:auto;display:flex;gap:.4rem;flex-wrap:wrap}
-  .chip{background:var(--chip);color:var(--chip-fg);border-radius:999px;padding:.15rem .6rem;font-size:.75rem;font-weight:600}
-  main{max-width:1180px;margin:1rem auto;padding:0 1rem;display:grid;grid-template-columns:1fr 320px;gap:1.2rem}
-  @media (max-width:880px){ main{grid-template-columns:1fr} }
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1rem}
-  .card h2{font-size:.95rem;margin:.1rem 0 .8rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
-  .searchbar{display:flex;gap:.5rem;margin-bottom:.7rem}
-  input,select,textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:.5rem .6rem;width:100%}
-  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
-  button{font:inherit;font-weight:600;cursor:pointer;border:0;border-radius:8px;padding:.55rem .9rem;background:var(--accent);color:var(--accent-fg)}
-  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
-  button:disabled{opacity:.5;cursor:default}
-  .filters{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-bottom:.4rem}
-  @media (max-width:880px){ .filters{grid-template-columns:1fr 1fr} }
-  .filters label{font-size:.72rem;color:var(--muted);display:block;margin-bottom:.15rem}
-  .meta{color:var(--muted);font-size:.8rem}
-  .result{border-top:1px solid var(--line);padding:.8rem 0}
-  .result:first-of-type{border-top:0}
-  .result h3{margin:0 0 .2rem;font-size:1.02rem}
-  .result .snippet{font-size:.9rem;margin-top:.25rem}
-  .result .snippet b{background:rgba(37,99,235,.18);border-radius:3px;padding:0 2px}
-  .rank{display:inline-block;min-width:1.4rem;color:var(--muted);font-variant-numeric:tabular-nums}
-  .stat{display:flex;justify-content:space-between;padding:.28rem 0;border-bottom:1px dashed var(--line);font-size:.88rem}
-  .stat:last-child{border-bottom:0}
-  .stat b{font-variant-numeric:tabular-nums}
-  .msg{font-size:.85rem;color:var(--muted);padding:.5rem 0}
-  .msg.err{color:var(--err)}
-  form.stack{display:flex;flex-direction:column;gap:.45rem}
-  details{margin-top:.6rem} summary{cursor:pointer;font-weight:600;font-size:.85rem;color:var(--muted)}
-  .row{display:flex;gap:.5rem} .row>*{flex:1}
-  footer{max-width:1180px;margin:1rem auto 2rem;padding:0 1rem;color:var(--muted);font-size:.8rem}
-  .toggle{display:inline-flex;align-items:center;gap:.4rem;font-size:.85rem;color:var(--muted);cursor:pointer;width:auto}
-  .toggle input{width:auto}
-  .step{border:1px solid var(--line);border-radius:10px;padding:.6rem .75rem;margin-bottom:.55rem;background:var(--bg)}
-  .step h4{margin:0 0 .15rem;font-size:.92rem;display:flex;align-items:center}
-  .step .note{color:var(--muted);font-size:.8rem;margin:.15rem 0 .4rem;word-break:break-word}
-  .step table{width:100%;border-collapse:collapse;font-size:.8rem}
-  .step td,.step th{text-align:left;padding:.14rem .4rem;border-bottom:1px solid var(--line)}
-  .step th{color:var(--muted);font-weight:600}
-  .step .sc{font-variant-numeric:tabular-nums;color:var(--accent);text-align:right;white-space:nowrap}
-  .step code{color:var(--muted);font-size:.9em}
-  .badge2{display:inline-block;background:var(--chip);color:var(--chip-fg);border-radius:6px;padding:0 .45rem;font-size:.72rem;margin-left:.5rem}
-  .arrow{color:var(--muted);text-align:center;font-size:.9rem;margin:-.2rem 0 .35rem}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>News Search Engine — Demo</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #fff;
+      --fg: #1c2024;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --accent: #2563eb;
+      --accent-fg: #fff;
+      --ok: #16a34a;
+      --warn: #d97706;
+      --err: #dc2626;
+      --chip: #eef2ff;
+      --chip-fg: #3730a3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1216;
+        --card: #171b21;
+        --fg: #e6e8eb;
+        --muted: #9aa4b2;
+        --line: #2a2f37;
+        --accent: #3b82f6;
+        --chip: #1e253a;
+        --chip-fg: #a5b4fc;
+      }
+    }
+
+    * {
+      box-sizing: border-box
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.5
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none
+    }
+
+    a:hover {
+      text-decoration: underline
+    }
+
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--line);
+      padding: .8rem 1.2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap
+    }
+
+    header h1 {
+      font-size: 1.15rem;
+      margin: 0
+    }
+
+    .dot {
+      width: .6rem;
+      height: .6rem;
+      border-radius: 50%;
+      background: var(--muted);
+      display: inline-block;
+      margin-right: .35rem
+    }
+
+    .dot.ok {
+      background: var(--ok)
+    }
+
+    .dot.err {
+      background: var(--err)
+    }
+
+    .badges {
+      margin-left: auto;
+      display: flex;
+      gap: .4rem;
+      flex-wrap: wrap
+    }
+
+    .chip {
+      background: var(--chip);
+      color: var(--chip-fg);
+      border-radius: 999px;
+      padding: .15rem .6rem;
+      font-size: .75rem;
+      font-weight: 600
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 1rem auto;
+      padding: 0 1rem;
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 1.2rem
+    }
+
+    @media (max-width:880px) {
+      main {
+        grid-template-columns: 1fr
+      }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1rem
+    }
+
+    .card h2 {
+      font-size: .95rem;
+      margin: .1rem 0 .8rem;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted)
+    }
+
+    .searchbar {
+      display: flex;
+      gap: .5rem;
+      margin-bottom: .7rem
+    }
+
+    input,
+    select,
+    textarea {
+      font: inherit;
+      color: inherit;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: .5rem .6rem;
+      width: 100%
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: -1px
+    }
+
+    button {
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      border: 0;
+      border-radius: 8px;
+      padding: .55rem .9rem;
+      background: var(--accent);
+      color: var(--accent-fg)
+    }
+
+    button.ghost {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--line)
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: default
+    }
+
+    .filters {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: .5rem;
+      margin-bottom: .4rem
+    }
+
+    @media (max-width:880px) {
+      .filters {
+        grid-template-columns: 1fr 1fr
+      }
+    }
+
+    .filters label {
+      font-size: .72rem;
+      color: var(--muted);
+      display: block;
+      margin-bottom: .15rem
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: .8rem
+    }
+
+    .result {
+      border-top: 1px solid var(--line);
+      padding: .8rem 0
+    }
+
+    .result:first-of-type {
+      border-top: 0
+    }
+
+    .result h3 {
+      margin: 0 0 .2rem;
+      font-size: 1.02rem
+    }
+
+    .result .snippet {
+      font-size: .9rem;
+      margin-top: .25rem
+    }
+
+    .result .snippet b {
+      background: rgba(37, 99, 235, .18);
+      border-radius: 3px;
+      padding: 0 2px
+    }
+
+    .rank {
+      display: inline-block;
+      min-width: 1.4rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums
+    }
+
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      padding: .28rem 0;
+      border-bottom: 1px dashed var(--line);
+      font-size: .88rem
+    }
+
+    .stat:last-child {
+      border-bottom: 0
+    }
+
+    .stat b {
+      font-variant-numeric: tabular-nums
+    }
+
+    .msg {
+      font-size: .85rem;
+      color: var(--muted);
+      padding: .5rem 0
+    }
+
+    .msg.err {
+      color: var(--err)
+    }
+
+    form.stack {
+      display: flex;
+      flex-direction: column;
+      gap: .45rem
+    }
+
+    details {
+      margin-top: .6rem
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: .85rem;
+      color: var(--muted)
+    }
+
+    .row {
+      display: flex;
+      gap: .5rem
+    }
+
+    .row>* {
+      flex: 1
+    }
+
+    footer {
+      max-width: 1180px;
+      margin: 1rem auto 2rem;
+      padding: 0 1rem;
+      color: var(--muted);
+      font-size: .8rem
+    }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      font-size: .85rem;
+      color: var(--muted);
+      cursor: pointer;
+      width: auto
+    }
+
+    .toggle input {
+      width: auto
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: .6rem .75rem;
+      margin-bottom: .55rem;
+      background: var(--bg)
+    }
+
+    .step h4 {
+      margin: 0 0 .15rem;
+      font-size: .92rem;
+      display: flex;
+      align-items: center
+    }
+
+    .step .note {
+      color: var(--muted);
+      font-size: .8rem;
+      margin: .15rem 0 .4rem;
+      word-break: break-word
+    }
+
+    .step table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .8rem
+    }
+
+    .step td,
+    .step th {
+      text-align: left;
+      padding: .14rem .4rem;
+      border-bottom: 1px solid var(--line)
+    }
+
+    .step th {
+      color: var(--muted);
+      font-weight: 600
+    }
+
+    .step .sc {
+      font-variant-numeric: tabular-nums;
+      color: var(--accent);
+      text-align: right;
+      white-space: nowrap
+    }
+
+    .step code {
+      color: var(--muted);
+      font-size: .9em
+    }
+
+    .badge2 {
+      display: inline-block;
+      background: var(--chip);
+      color: var(--chip-fg);
+      border-radius: 6px;
+      padding: 0 .45rem;
+      font-size: .72rem;
+      margin-left: .5rem
+    }
+
+    .arrow {
+      color: var(--muted);
+      text-align: center;
+      font-size: .9rem;
+      margin: -.2rem 0 .35rem
+    }
+  </style>
 </head>
+
 <body>
-<header>
-  <h1>🔎 News Search Engine</h1>
-  <span id="health"><span class="dot" id="healthDot"></span><span id="healthTxt">đang kết nối…</span></span>
-  <div class="badges" id="badges"></div>
-</header>
+  <header>
+    <h1>🔎 News Search Engine</h1>
+    <span id="health"><span class="dot" id="healthDot"></span><span id="healthTxt">đang kết nối…</span></span>
+    <div class="badges" id="badges"></div>
+  </header>
 
-<main>
-  <section>
-    <div class="card">
-      <div class="searchbar">
-        <input id="q" aria-label="Truy vấn tìm kiếm" placeholder="Nhập truy vấn tiếng Việt… (vd: lạm phát tháng 6, vì sao giá vàng tăng)" autofocus>
-        <button id="btnSearch">Tìm</button>
-      </div>
-      <div class="filters">
-        <div><label for="mode">Chế độ</label>
-          <select id="mode"><option value="hybrid">hybrid</option><option value="lexical">lexical</option><option value="semantic">semantic</option></select></div>
-        <div><label for="topk">Top-k</label><input id="topk" type="number" min="1" max="100" value="10"></div>
-        <div><label for="category">Chuyên mục</label><input id="category" placeholder="vd: Kinh tế"></div>
-        <div><label for="author">Tác giả</label><input id="author" placeholder="tùy chọn"></div>
-        <div><label for="dateFrom">Từ ngày</label><input id="dateFrom" type="date"></div>
-        <div><label for="dateTo">Đến ngày</label><input id="dateTo" type="date"></div>
-      </div>
-      <label class="toggle"><input type="checkbox" id="explainToggle"> 🔬 Giải thích từng bước xử lý (hiển thị kết quả trung gian)</label>
-      <div class="msg" id="searchMsg" aria-live="polite"></div>
-    </div>
-
-    <div class="card" style="margin-top:1rem">
-      <h2>Kết quả <span id="resultCount" class="meta"></span></h2>
-      <div id="results"><div class="msg">Nhập truy vấn rồi bấm Tìm.</div></div>
-    </div>
-
-    <div class="card" id="traceCard" style="margin-top:1rem;display:none">
-      <h2>Các bước xử lý <span id="traceMode" class="meta"></span></h2>
-      <div id="trace"></div>
-    </div>
-  </section>
-
-  <aside>
-    <div class="card">
-      <h2>Chỉ số trực tiếp</h2>
-      <div id="stats"><div class="msg">…</div></div>
-    </div>
-
-    <div class="card" style="margin-top:1rem">
-      <h2>Thêm bài viết</h2>
-      <form class="stack" id="addForm">
-        <input id="a_id" placeholder="article_id *" required>
-        <input id="a_title" placeholder="Tiêu đề *" required>
-        <textarea id="a_body" placeholder="Nội dung *" rows="3" required></textarea>
-        <div class="row">
-          <input id="a_category" placeholder="Chuyên mục">
-          <input id="a_author" placeholder="Tác giả">
+  <main>
+    <section>
+      <div class="card">
+        <div class="searchbar">
+          <input id="q" aria-label="Truy vấn tìm kiếm"
+            placeholder="Nhập truy vấn tiếng Việt… (vd: lạm phát tháng 6, vì sao giá vàng tăng)" autofocus>
+          <button id="btnSearch">Tìm</button>
         </div>
-        <input id="a_url" placeholder="URL (vd /kt/bai-1)">
-        <button type="submit">Nạp vào chỉ mục</button>
-        <div class="msg" id="addMsg"></div>
-      </form>
-    </div>
-
-    <div class="card" style="margin-top:1rem">
-      <h2>Quản trị</h2>
-      <div class="row">
-        <input id="adminToken" placeholder="ADMIN_TOKEN" type="password">
-        <button class="ghost" id="btnReindex">Reindex</button>
+        <div class="filters">
+          <div><label for="mode">Chế độ</label>
+            <select id="mode">
+              <option value="hybrid">hybrid</option>
+              <option value="lexical">lexical</option>
+              <option value="semantic">semantic</option>
+            </select>
+          </div>
+          <div><label for="topk">Top-k</label><input id="topk" type="number" min="1" max="100" value="10"></div>
+          <div><label for="category">Chuyên mục</label><input id="category" placeholder="vd: Kinh tế"></div>
+          <div><label for="author">Tác giả</label><input id="author" placeholder="tùy chọn"></div>
+          <div><label for="dateFrom">Từ ngày</label><input id="dateFrom" type="date"></div>
+          <div><label for="dateTo">Đến ngày</label><input id="dateTo" type="date"></div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="explainToggle"> 🔬 Giải thích từng bước xử lý (hiển thị kết quả
+          trung gian)</label>
+        <div class="row" style="margin-top: 0.5rem; gap: 1.5rem; display: flex; flex-wrap: wrap;">
+          <label class="toggle"><input type="checkbox" id="dedupToggle" checked> Gom cụm trùng lặp (Dedup)</label>
+          <label class="toggle"><input type="checkbox" id="timeDecayToggle" checked> Phạt thời gian (Time-decay)</label>
+          <label class="toggle"><input type="checkbox" id="mmrToggle" checked> Đa dạng hóa (MMR)</label>
+        </div>
+        <div class="msg" id="searchMsg" aria-live="polite"></div>
       </div>
-      <div class="msg" id="adminMsg"></div>
-      <details>
-        <summary>Liên kết vận hành</summary>
-        <p style="margin:.4rem 0 0"><a href="/dashboard" target="_blank">Dashboard metrics →</a><br>
-        <a href="/metrics" target="_blank">Prometheus /metrics →</a><br>
-        <a href="/docs" target="_blank">OpenAPI /docs →</a></p>
-      </details>
-    </div>
-  </aside>
-</main>
 
-<footer>Demo tương tác của hệ thống tìm kiếm báo chí — gọi trực tiếp REST API (/search, /articles, /events/click, /stats).</footer>
+      <div class="card" style="margin-top:1rem">
+        <h2>Kết quả <span id="resultCount" class="meta"></span></h2>
+        <div id="results">
+          <div class="msg">Nhập truy vấn rồi bấm Tìm.</div>
+        </div>
+      </div>
 
-<script>
-"use strict";
-const $ = (id) => document.getElementById(id);
-let searchId = null, resultsShownAt = 0;
+      <div class="card" id="traceCard" style="margin-top:1rem;display:none">
+        <h2>Các bước xử lý <span id="traceMode" class="meta"></span></h2>
+        <div id="trace"></div>
+      </div>
+    </section>
 
-// Escape HTML để chống XSS; sau đó cho phép LẠI cặp <b>…</b> do snippet của ta sinh.
-function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => (
-  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function snippetHtml(s){ return esc(s).replace(/&lt;b&gt;/g,"<b>").replace(/&lt;\/b&gt;/g,"</b>"); }
-// Chỉ cho phép http(s) và URL tương đối -> chặn javascript:/data:/vbscript: (XSS)
-function safeUrl(u){ u = String(u ?? "").trim(); return /^(https?:\/\/|\/)/i.test(u) ? u : "#"; }
-// FastAPI 422 trả detail là MẢNG object -> trích thông điệp gọn (tránh "[object Object]")
-function detailMsg(d){ return Array.isArray(d) ? d.map(x => x.msg || JSON.stringify(x)).join("; ") : (d || ""); }
+    <aside>
+      <div class="card">
+        <h2>Chỉ số trực tiếp</h2>
+        <div id="stats">
+          <div class="msg">…</div>
+        </div>
+      </div>
 
-async function jget(url){ const r = await fetch(url); if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status); return r; }
+      <div class="card" style="margin-top:1rem">
+        <h2>Thêm bài viết</h2>
+        <form class="stack" id="addForm">
+          <input id="a_id" placeholder="article_id *" required>
+          <input id="a_title" placeholder="Tiêu đề *" required>
+          <textarea id="a_body" placeholder="Nội dung *" rows="3" required></textarea>
+          <div class="row">
+            <input id="a_category" placeholder="Chuyên mục">
+            <input id="a_author" placeholder="Tác giả">
+          </div>
+          <input id="a_url" placeholder="URL (vd /kt/bai-1)">
+          <button type="submit">Nạp vào chỉ mục</button>
+          <div class="msg" id="addMsg"></div>
+        </form>
+      </div>
 
-async function doSearch(){
-  const q = $("q").value.trim();
-  const msg = $("searchMsg"); msg.className="msg"; msg.textContent="";
-  if(!q){ msg.textContent="Hãy nhập truy vấn."; return; }
-  const topk = Math.min(100, Math.max(1, parseInt($("topk").value,10) || 10));  // kẹp 1..100
-  const p = new URLSearchParams({q, mode:$("mode").value, top_k:String(topk)});
-  for(const [k,el] of [["category","category"],["author","author"],["date_from","dateFrom"],["date_to","dateTo"]]){
-    const v = $(el).value.trim(); if(v) p.set(k, v);
-  }
-  const explainOn = $("explainToggle").checked;
-  $("btnSearch").disabled = true; msg.textContent = explainOn ? "Đang giải thích…" : "Đang tìm…";
-  try{
-    const t0 = performance.now();
-    const r = await fetch((explainOn ? "/explain?" : "/search?") + p.toString());
-    if(!r.ok){ const e = await r.json().catch(()=>({})); throw new Error(detailMsg(e.detail)||("HTTP "+r.status)); }
-    const ms = Math.round(performance.now()-t0);
-    if(explainOn){
-      const data = await r.json();
-      searchId = null;                       // explain: chế độ quan sát, không log feedback
-      resultsShownAt = Date.now();
-      renderResults(data.results);
-      renderTrace(data.trace);
-      $("traceCard").style.display = "";
-      $("traceMode").textContent = `(mode: ${esc(data.mode)}, ${data.trace.length} bước)`;
-      msg.textContent = `${data.results.length} kết quả · ${data.trace.length} bước · ${ms} ms`;
-    }else{
-      searchId = r.headers.get("X-Search-Id");
-      const items = await r.json();
-      resultsShownAt = Date.now();
-      renderResults(items);
-      $("traceCard").style.display = "none";
-      msg.textContent = `${items.length} kết quả · ${ms} ms`
-         + (r.headers.get("X-Variant") ? ` · biến thể ${r.headers.get("X-Variant")}` : "");
+      <div class="card" style="margin-top:1rem">
+        <h2>Quản trị</h2>
+        <div class="row">
+          <input id="adminToken" placeholder="ADMIN_TOKEN" type="password">
+          <button class="ghost" id="btnReindex">Reindex</button>
+        </div>
+        <div class="msg" id="adminMsg"></div>
+        <details>
+          <summary>Liên kết vận hành</summary>
+          <p style="margin:.4rem 0 0"><a href="/dashboard" target="_blank">Dashboard metrics →</a><br>
+            <a href="/metrics" target="_blank">Prometheus /metrics →</a><br>
+            <a href="/docs" target="_blank">OpenAPI /docs →</a>
+          </p>
+        </details>
+      </div>
+    </aside>
+  </main>
+
+  <footer>Demo tương tác của hệ thống tìm kiếm báo chí — gọi trực tiếp REST API (/search, /articles, /events/click,
+    /stats).</footer>
+
+  <script>
+    "use strict";
+    const $ = (id) => document.getElementById(id);
+    let searchId = null, resultsShownAt = 0;
+
+    // Escape HTML để chống XSS; sau đó cho phép LẠI cặp <b>…</b> do snippet của ta sinh.
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, c => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     }
-  }catch(e){ msg.className="msg err"; msg.textContent="Lỗi: "+e.message; }
-  finally{ $("btnSearch").disabled = false; refreshStats(); }
-}
+    function snippetHtml(s) { return esc(s).replace(/&lt;b&gt;/g, "<b>").replace(/&lt;\/b&gt;/g, "</b>"); }
+    // Chỉ cho phép http(s) và URL tương đối -> chặn javascript:/data:/vbscript: (XSS)
+    function safeUrl(u) { u = String(u ?? "").trim(); return /^(https?:\/\/|\/)/i.test(u) ? u : "#"; }
+    // FastAPI 422 trả detail là MẢNG object -> trích thông điệp gọn (tránh "[object Object]")
+    function detailMsg(d) { return Array.isArray(d) ? d.map(x => x.msg || JSON.stringify(x)).join("; ") : (d || ""); }
 
-// Vẽ các bước xử lý pipeline (explain) — mỗi bước 1 thẻ + bảng kết quả trung gian.
-function renderTrace(trace){
-  $("trace").innerHTML = (trace||[]).map((s, si)=>{
-    let tbl = "";
-    const items = s.items || [];
-    if(items.length){
-      const hasScore   = items.some(x => x.score !== null && x.score !== undefined);
-      const hasCluster = items.some(x => x.cluster !== undefined);
-      const head = `<tr><th>#</th><th>Bài viết</th>${hasScore?'<th class="sc">điểm</th>':''}${hasCluster?'<th>cụm</th>':''}</tr>`;
-      const rows = items.map((it,i)=>`<tr>
-        <td>${i+1}</td>
+    async function jget(url) { const r = await fetch(url); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status); return r; }
+
+    async function doSearch() {
+      const q = $("q").value.trim();
+      const msg = $("searchMsg"); msg.className = "msg"; msg.textContent = "";
+      if (!q) { msg.textContent = "Hãy nhập truy vấn."; return; }
+      const topk = Math.min(100, Math.max(1, parseInt($("topk").value, 10) || 10));  // kẹp 1..100
+      const p = new URLSearchParams({
+        q,
+        mode: $("mode").value,
+        top_k: String(topk),
+        dedup: String($("dedupToggle").checked),
+        time_decay: String($("timeDecayToggle").checked),
+        mmr: String($("mmrToggle").checked)
+      });
+      for (const [k, el] of [["category", "category"], ["author", "author"], ["date_from", "dateFrom"], ["date_to", "dateTo"]]) {
+        const v = $(el).value.trim(); if (v) p.set(k, v);
+      }
+      const explainOn = $("explainToggle").checked;
+      $("btnSearch").disabled = true; msg.textContent = explainOn ? "Đang giải thích…" : "Đang tìm…";
+      try {
+        const t0 = performance.now();
+        const r = await fetch((explainOn ? "/explain?" : "/search?") + p.toString());
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(detailMsg(e.detail) || ("HTTP " + r.status)); }
+        const ms = Math.round(performance.now() - t0);
+        if (explainOn) {
+          const data = await r.json();
+          searchId = null;                       // explain: chế độ quan sát, không log feedback
+          resultsShownAt = Date.now();
+          renderResults(data.results);
+          renderTrace(data.trace);
+          $("traceCard").style.display = "";
+          $("traceMode").textContent = `(mode: ${esc(data.mode)}, ${data.trace.length} bước)`;
+          msg.textContent = `${data.results.length} kết quả · ${data.trace.length} bước · ${ms} ms`;
+        } else {
+          searchId = r.headers.get("X-Search-Id");
+          const items = await r.json();
+          resultsShownAt = Date.now();
+          renderResults(items);
+          $("traceCard").style.display = "none";
+          msg.textContent = `${items.length} kết quả · ${ms} ms`
+            + (r.headers.get("X-Variant") ? ` · biến thể ${r.headers.get("X-Variant")}` : "");
+        }
+      } catch (e) { msg.className = "msg err"; msg.textContent = "Lỗi: " + e.message; }
+      finally { $("btnSearch").disabled = false; refreshStats(); }
+    }
+
+    // Vẽ các bước xử lý pipeline (explain) — mỗi bước 1 thẻ + bảng kết quả trung gian.
+    function renderTrace(trace) {
+      $("trace").innerHTML = (trace || []).map((s, si) => {
+        let tbl = "";
+        const items = s.items || [];
+        if (items.length) {
+          const hasScore = items.some(x => x.score !== null && x.score !== undefined);
+          const hasCluster = items.some(x => x.cluster !== undefined);
+          const head = `<tr><th>#</th><th>Bài viết</th>${hasScore ? '<th class="sc">điểm</th>' : ''}${hasCluster ? '<th>cụm</th>' : ''}</tr>`;
+          const rows = items.map((it, i) => `<tr>
+        <td>${i + 1}</td>
         <td>${esc(it.title)} <code>${esc(it.article_id)}</code></td>
-        ${hasScore?`<td class="sc">${it.score==null?'—':esc(it.score)}</td>`:''}
-        ${hasCluster?`<td><code>${esc(it.cluster ?? '')}</code></td>`:''}
+        ${hasScore ? `<td class="sc">${it.score == null ? '—' : esc(it.score)}</td>` : ''}
+        ${hasCluster ? `<td><code>${esc(it.cluster ?? '')}</code></td>` : ''}
       </tr>`).join("");
-      tbl = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
-    }
-    const arrow = si>0 ? '<div class="arrow">↓</div>' : '';
-    return arrow + `<div class="step">
-      <h4>${esc(s.title)}${s.count!=null?`<span class="badge2">${esc(s.count)} bài</span>`:''}</h4>
-      ${s.note?`<div class="note">${esc(s.note)}</div>`:''}
+          tbl = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+        }
+        const arrow = si > 0 ? '<div class="arrow">↓</div>' : '';
+        return arrow + `<div class="step">
+      <h4>${esc(s.title)}${s.count != null ? `<span class="badge2">${esc(s.count)} bài</span>` : ''}</h4>
+      ${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
       ${tbl}
     </div>`;
-  }).join("");
-}
+      }).join("");
+    }
 
-function renderResults(items){
-  $("resultCount").textContent = items.length ? `(${items.length})` : "";
-  const box = $("results");
-  if(!items.length){ box.innerHTML = '<div class="msg">Không có kết quả phù hợp.</div>'; return; }
-  // KHÔNG nội suy dữ liệu vào inline JS (onclick) — dùng data-* + event delegation
-  // để tránh XSS khi article_id/url do người dùng nhập (POST /articles không xác thực).
-  box.innerHTML = items.map((it,i)=>{
-    const date = (it.published_at||"").slice(0,10);
-    const href = esc(safeUrl(it.url));
-    return `<div class="result">
-      <h3><span class="rank">${i+1}.</span>
+    function renderResults(items) {
+      $("resultCount").textContent = items.length ? `(${items.length})` : "";
+      const box = $("results");
+      if (!items.length) { box.innerHTML = '<div class="msg">Không có kết quả phù hợp.</div>'; return; }
+      // KHÔNG nội suy dữ liệu vào inline JS (onclick) — dùng data-* + event delegation
+      // để tránh XSS khi article_id/url do người dùng nhập (POST /articles không xác thực).
+      box.innerHTML = items.map((it, i) => {
+        const date = (it.published_at || "").slice(0, 10);
+        const href = esc(safeUrl(it.url));
+        return `<div class="result">
+      <h3><span class="rank">${i + 1}.</span>
         <a href="${href}" target="_blank" rel="noopener"
-           data-aid="${esc(it.article_id)}" data-pos="${i+1}">${esc(it.title)}</a></h3>
+           data-aid="${esc(it.article_id)}" data-pos="${i + 1}">${esc(it.title)}</a></h3>
       <div class="meta">${esc(date)} · <code>${esc(it.article_id)}</code></div>
       <div class="snippet">${snippetHtml(it.snippet)}</div>
     </div>`;
-  }).join("");
-}
+      }).join("");
+    }
 
-async function logClick(articleId, position){
-  if(!searchId) return; // feedback tắt -> không có search_id
-  try{
-    await fetch("/events/click", {method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({search_id:searchId, article_id:articleId, position,
-        dwell_ms: Math.max(0, Date.now()-resultsShownAt)})});
-    setTimeout(refreshStats, 200);
-  }catch(_){/* fire-and-forget */}
-}
-
-async function refreshStats(){
-  try{
-    const s = await (await jget("/stats")).json();
-    const m = s.metrics||{}, f = s.feedback||{};
-    const rows = [
-      ["Bài đã index", s.counts.articles],
-      ["Generation", s.counts.generation],
-      ["Lượt tìm", m.searches ?? "—"],
-      ["Latency p95 (ms)", m.latency_p95_ms ?? "—"],
-      ["Zero-result", m.zero_result_rate!=null ? (m.zero_result_rate*100).toFixed(0)+"%" : "—"],
-      ["Cache hit", m.cache_hit_rate!=null ? (m.cache_hit_rate*100).toFixed(0)+"%" : "—"],
-      ["CTR", f.ctr!=null ? (f.ctr*100).toFixed(0)+"%" : "—"],
-    ];
-    $("stats").innerHTML = rows.map(([k,v])=>`<div class="stat"><span>${k}</span><b>${esc(v)}</b></div>`).join("");
-    $("badges").innerHTML = [
-      `emb:${s.backends.embedder}`, `vec:${s.backends.vector}`, `rerank:${s.backends.reranker}`,
-      ...Object.entries(s.features).filter(([,v])=>v).map(([k])=>k)
-    ].map(t=>`<span class="chip">${esc(t)}</span>`).join("");
-  }catch(_){/* im lặng */}
-}
-
-async function checkHealth(){
-  try{ const h = await (await jget("/healthz")).json();
-    $("healthDot").className="dot ok"; $("healthTxt").textContent=`sẵn sàng · ${h.articles} bài`;
-  }catch(e){ $("healthDot").className="dot err"; $("healthTxt").textContent="mất kết nối"; }
-}
-
-$("addForm").addEventListener("submit", async (e)=>{
-  e.preventDefault();
-  const msg=$("addMsg"); msg.className="msg"; msg.textContent="Đang nạp…";
-  const body = {
-    article_id:$("a_id").value.trim(), title:$("a_title").value.trim(), body:$("a_body").value.trim(),
-    url:$("a_url").value.trim()||("/"+$("a_id").value.trim()),
-    published_at: new Date().toISOString(),
-    category:$("a_category").value.trim()||null, author:$("a_author").value.trim()||null,
-  };
-  try{
-    const r = await fetch("/articles",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-    const d = await r.json();
-    if(!r.ok) throw new Error(detailMsg(d.detail)||("HTTP "+r.status));
-    msg.textContent = `Đã nạp: ${d.article_id}`; $("addForm").reset(); refreshStats();
-  }catch(e){ msg.className="msg err"; msg.textContent="Lỗi: "+e.message; }
-});
-
-let reindexInterval = null;
-$("btnReindex").addEventListener("click", async ()=>{
-  const msg=$("adminMsg"); msg.className="msg"; msg.textContent="Đang gửi yêu cầu reindex…";
-  const token = $("adminToken").value;
-  try{
-    const r = await fetch("/admin/reindex",{method:"POST",
-      headers:{"Content-Type":"application/json","X-Admin-Token":token},
-      body: JSON.stringify({})});
-    const d = await r.json();
-    if(!r.ok) throw new Error(detailMsg(d.detail)||("HTTP "+r.status));
-    
-    msg.textContent = "Đang khởi tạo chỉ mục nền…";
-    if(reindexInterval) clearInterval(reindexInterval);
-    
-    // Poll trạng thái reindex mỗi 1 giây
-    reindexInterval = setInterval(async () => {
+    async function logClick(articleId, position) {
+      if (!searchId) return; // feedback tắt -> không có search_id
       try {
-        const rs = await fetch("/admin/reindex/status", {
-          headers: {"X-Admin-Token": token}
+        await fetch("/events/click", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            search_id: searchId, article_id: articleId, position,
+            dwell_ms: Math.max(0, Date.now() - resultsShownAt)
+          })
         });
-        const ds = await rs.json();
-        if(!rs.ok) throw new Error(detailMsg(ds.detail)||("HTTP "+rs.status));
-        
-        if (ds.status === "indexing") {
-          let progress = "Đang reindex: ";
-          if (ds.total > 0) {
-            const pct = ((ds.processed / ds.total) * 100).toFixed(1);
-            progress += `${ds.processed}/${ds.total} bài (${pct}%)`;
-          } else {
-            progress += `${ds.processed} bài`;
-          }
-          if (ds.speed > 0) {
-            progress += ` · Tốc độ: ${ds.speed.toFixed(1)} bài/s`;
-          }
-          if (ds.skipped > 0) {
-            progress += ` · Bỏ qua: ${ds.skipped}`;
-          }
-          msg.textContent = progress;
-        } else if (ds.status === "success") {
-          clearInterval(reindexInterval);
-          msg.textContent = `Thành công: đã nạp ${ds.processed} bài (bỏ qua ${ds.skipped} bài lỗi).`;
-          refreshStats();
-        } else if (ds.status === "failed") {
-          clearInterval(reindexInterval);
-          msg.className = "msg err";
-          msg.textContent = "Lỗi: " + ds.error_msg;
-        }
-      } catch (e) {
-        clearInterval(reindexInterval);
-        msg.className = "msg err";
-        msg.textContent = "Lỗi polling: " + e.message;
-      }
-    }, 1000);
-  }catch(e){ msg.className="msg err"; msg.textContent="Lỗi: "+e.message; }
-});
+        setTimeout(refreshStats, 200);
+      } catch (_) {/* fire-and-forget */ }
+    }
 
-$("btnSearch").addEventListener("click", doSearch);
-$("q").addEventListener("keydown", e=>{ if(e.key==="Enter") doSearch(); });
-// Log click qua event delegation (không dùng inline onclick -> an toàn XSS)
-$("results").addEventListener("click", (e)=>{
-  const a = e.target.closest("a[data-aid]");
-  if(a) logClick(a.dataset.aid, Number(a.dataset.pos));
-});
+    async function refreshStats() {
+      try {
+        const s = await (await jget("/stats")).json();
+        const m = s.metrics || {}, f = s.feedback || {};
+        const rows = [
+          ["Bài đã index", s.counts.articles],
+          ["Generation", s.counts.generation],
+          ["Lượt tìm", m.searches ?? "—"],
+          ["Latency p95 (ms)", m.latency_p95_ms ?? "—"],
+          ["Zero-result", m.zero_result_rate != null ? (m.zero_result_rate * 100).toFixed(0) + "%" : "—"],
+          ["Cache hit", m.cache_hit_rate != null ? (m.cache_hit_rate * 100).toFixed(0) + "%" : "—"],
+          ["CTR", f.ctr != null ? (f.ctr * 100).toFixed(0) + "%" : "—"],
+        ];
+        $("stats").innerHTML = rows.map(([k, v]) => `<div class="stat"><span>${k}</span><b>${esc(v)}</b></div>`).join("");
+        $("badges").innerHTML = [
+          `emb:${s.backends.embedder}`, `vec:${s.backends.vector}`, `rerank:${s.backends.reranker}`,
+          ...Object.entries(s.features).filter(([, v]) => v).map(([k]) => k)
+        ].map(t => `<span class="chip">${esc(t)}</span>`).join("");
+      } catch (_) {/* im lặng */ }
+    }
 
-checkHealth(); refreshStats(); setInterval(refreshStats, 5000);
-</script>
+    async function checkHealth() {
+      try {
+        const h = await (await jget("/healthz")).json();
+        $("healthDot").className = "dot ok"; $("healthTxt").textContent = `sẵn sàng · ${h.articles} bài`;
+      } catch (e) { $("healthDot").className = "dot err"; $("healthTxt").textContent = "mất kết nối"; }
+    }
+
+    $("addForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = $("addMsg"); msg.className = "msg"; msg.textContent = "Đang nạp…";
+      const body = {
+        article_id: $("a_id").value.trim(), title: $("a_title").value.trim(), body: $("a_body").value.trim(),
+        url: $("a_url").value.trim() || ("/" + $("a_id").value.trim()),
+        published_at: new Date().toISOString(),
+        category: $("a_category").value.trim() || null, author: $("a_author").value.trim() || null,
+      };
+      try {
+        const r = await fetch("/articles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const d = await r.json();
+        if (!r.ok) throw new Error(detailMsg(d.detail) || ("HTTP " + r.status));
+        msg.textContent = `Đã nạp: ${d.article_id}`; $("addForm").reset(); refreshStats();
+      } catch (e) { msg.className = "msg err"; msg.textContent = "Lỗi: " + e.message; }
+    });
+
+    let reindexInterval = null;
+    $("btnReindex").addEventListener("click", async () => {
+      const msg = $("adminMsg"); msg.className = "msg"; msg.textContent = "Đang gửi yêu cầu reindex…";
+      const token = $("adminToken").value;
+      try {
+        const r = await fetch("/admin/reindex", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+          body: JSON.stringify({})
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(detailMsg(d.detail) || ("HTTP " + r.status));
+
+        msg.textContent = "Đang khởi tạo chỉ mục nền…";
+        if (reindexInterval) clearInterval(reindexInterval);
+
+        // Poll trạng thái reindex mỗi 1 giây
+        reindexInterval = setInterval(async () => {
+          try {
+            const rs = await fetch("/admin/reindex/status", {
+              headers: { "X-Admin-Token": token }
+            });
+            const ds = await rs.json();
+            if (!rs.ok) throw new Error(detailMsg(ds.detail) || ("HTTP " + rs.status));
+
+            if (ds.status === "indexing") {
+              let progress = "Đang reindex: ";
+              if (ds.total > 0) {
+                const pct = ((ds.processed / ds.total) * 100).toFixed(1);
+                progress += `${ds.processed}/${ds.total} bài (${pct}%)`;
+              } else {
+                progress += `${ds.processed} bài`;
+              }
+              if (ds.speed > 0) {
+                progress += ` · Tốc độ: ${ds.speed.toFixed(1)} bài/s`;
+              }
+              if (ds.skipped > 0) {
+                progress += ` · Bỏ qua: ${ds.skipped}`;
+              }
+              msg.textContent = progress;
+            } else if (ds.status === "success") {
+              clearInterval(reindexInterval);
+              msg.textContent = `Thành công: đã nạp ${ds.processed} bài (bỏ qua ${ds.skipped} bài lỗi).`;
+              refreshStats();
+            } else if (ds.status === "failed") {
+              clearInterval(reindexInterval);
+              msg.className = "msg err";
+              msg.textContent = "Lỗi: " + ds.error_msg;
+            }
+          } catch (e) {
+            clearInterval(reindexInterval);
+            msg.className = "msg err";
+            msg.textContent = "Lỗi polling: " + e.message;
+          }
+        }, 10000);
+      } catch (e) { msg.className = "msg err"; msg.textContent = "Lỗi: " + e.message; }
+    });
+
+    $("btnSearch").addEventListener("click", doSearch);
+    $("q").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+    // Log click qua event delegation (không dùng inline onclick -> an toàn XSS)
+    $("results").addEventListener("click", (e) => {
+      const a = e.target.closest("a[data-aid]");
+      if (a) logClick(a.dataset.aid, Number(a.dataset.pos));
+    });
+
+    checkHealth(); refreshStats(); setInterval(refreshStats, 10000);
+  </script>
 </body>
+
 </html>

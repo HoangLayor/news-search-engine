@@ -15,7 +15,7 @@ from news_search.config import Settings
 from news_search.index.milvus_vector import MilvusVectorIndex
 
 # Đủ thuộc tính mà _create_collection dùng
-_DATATYPE = SimpleNamespace(VARCHAR=21, FLOAT_VECTOR=101)
+_DATATYPE = SimpleNamespace(VARCHAR=21, FLOAT_VECTOR=101, SPARSE_FLOAT_VECTOR=104, JSON=23)
 
 
 class _FakeSchema:
@@ -39,7 +39,9 @@ class _FakeClient:
     def describe_collection(self, name):
         return {"fields": [
             {"name": "article_id", "params": {"max_length": 256}},
-            {"name": "vector", "params": ({"dim": self._dim} if self._dim else {})},
+            {"name": "dense_vector", "params": ({"dim": self._dim} if self._dim else {})},
+            {"name": "sparse_vector", "params": {}},
+            {"name": "metadata", "params": {}},
         ]}
 
     def drop_collection(self, name):

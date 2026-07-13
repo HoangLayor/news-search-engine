@@ -33,9 +33,9 @@ class SearchPipeline:
         # ``reranker`` có thể được TIÊM để tái dùng (tránh nạp lại model VN ~GB
         # khi reindex blue-green — xem SearchService.reindex).
         self.reranker = reranker if reranker is not None else get_reranker(self.settings)
-        # (GĐ3) Query understanding — vocab lấy lười từ chỉ mục BM25.
+        # (GĐ3) Query understanding — tắt vocab_provider vì không còn local BM25 index.
         self.understander = QueryUnderstander(
-            self.settings, vocab_provider=lambda: self.manager.lexical.vocab_frequencies()
+            self.settings, vocab_provider=lambda: {}
         )
         # (GĐ5) Cache truy vấn nóng — None nếu CACHE_ENABLED=false.
         self.cache = get_cache(self.settings)
@@ -50,6 +50,7 @@ class SearchPipeline:
 
     def search(self, query: SearchQuery) -> list[SearchResultItem]:
         """Ánh xạ truy vấn -> danh sách bài viết xếp hạng (5 trường)."""
+        print(f"[PIPELINE DEBUG] Entered search with query: {query.text}", flush=True)
         return self._run(query, trace=None)
 
     def explain(self, query: SearchQuery) -> dict:
@@ -90,6 +91,7 @@ class SearchPipeline:
         explain = trace is not None
 
         # 1. Query understanding (rỗng -> ValueError, propagate lên caller)
+        print("[DEBUG] pipeline._run: step 1", flush=True)
         parsed = parse_query(query.text)
         if not parsed.tokens:
             if explain:
@@ -98,8 +100,14 @@ class SearchPipeline:
             return []
 
         # 1b. Query understanding (mặc định tắt -> giữ nguyên query.text)
+        print("[DEBUG] pipeline._run: step 1b", flush=True)
         effective_text = query.text
-        uinfo = self.understander.understand(parsed) if self.understander.enabled else None
+        try:
+            uinfo = self.understander.understand(parsed) if self.understander.enabled else None
+            print("[DEBUG] pipeline._run: uinfo =", uinfo, flush=True)
+        except Exception as e:
+            print("[DEBUG] pipeline._run: understander error:", e, flush=True)
+            raise
         if uinfo is not None:
             effective_text = uinfo.effective_text
         if explain:
@@ -122,6 +130,7 @@ class SearchPipeline:
                 return [SearchResultItem(**d) for d in cached]
 
         # 2. Lọc metadata (F-12)
+        print("[DEBUG] pipeline._run: step 2", flush=True)
         allowed_ids = self.manager.store.filter_ids(query.filters)
         if allowed_ids is not None and not allowed_ids:
             if explain:
@@ -133,7 +142,9 @@ class SearchPipeline:
                          else f"{len(allowed_ids)} bài thỏa bộ lọc")
 
         # 3-4. Retrieval + fusion (ghi bước bên trong _retrieve)
+        print("[DEBUG] pipeline._run: step 3-4", flush=True)
         base_scores = self._retrieve(query, effective_text, allowed_ids, trace)
+        print("[DEBUG] pipeline._run: retrieved", len(base_scores), flush=True)
         if not base_scores:
             if explain:
                 self._append(trace, "empty", "Kết quả", "Không có ứng viên nào khớp")
@@ -163,20 +174,29 @@ class SearchPipeline:
                 return []
 
         # 5. Time-decay / QDF (F-13)
-        now = query.now or datetime.now(timezone.utc)
-        half_life = cfg.fresh_half_life_days if parsed.fresh_intent else cfg.half_life_days
-        decayed = apply_time_decay(
-            base_scores,
-            published_lookup=lambda aid: self.manager.store.get(aid).published_at,
-            now=now, half_life_days=half_life, floor=cfg.decay_floor,
-        )
-        ranked_by_decay = sorted(decayed.items(), key=lambda kv: (-kv[1], kv[0]))
-        if explain:
-            self._append(trace, "decay", "5. Ưu tiên độ mới (time-decay/QDF)",
-                         f"half-life={half_life} ngày (fresh_intent={parsed.fresh_intent}), floor={cfg.decay_floor}",
-                         self._trace_items(ranked_by_decay), len(decayed))
+        time_decay_enabled = query.time_decay if query.time_decay is not None else cfg.time_decay_enabled
+        if time_decay_enabled:
+            now = query.now or datetime.now(timezone.utc)
+            half_life = cfg.fresh_half_life_days if parsed.fresh_intent else cfg.half_life_days
+            decayed = apply_time_decay(
+                base_scores,
+                published_lookup=lambda aid: self.manager.store.get(aid).published_at,
+                now=now, half_life_days=half_life, floor=cfg.decay_floor,
+            )
+            ranked_by_decay = sorted(decayed.items(), key=lambda kv: (-kv[1], kv[0]))
+            if explain:
+                self._append(trace, "decay", "5. Ưu tiên độ mới (time-decay/QDF)",
+                             f"half-life={half_life} ngày (fresh_intent={parsed.fresh_intent}), floor={cfg.decay_floor}",
+                             self._trace_items(ranked_by_decay), len(decayed))
+        else:
+            ranked_by_decay = sorted(base_scores.items(), key=lambda kv: (-kv[1], kv[0]))
+            if explain:
+                self._append(trace, "decay", "5. Ưu tiên độ mới (time-decay/QDF) - Tắt",
+                             "Bỏ qua bước này",
+                             self._trace_items(ranked_by_decay), len(ranked_by_decay))
 
         # 6. Rerank tinh trên top-N theo điểm đã decay
+        print("[DEBUG] pipeline._run: step 6", flush=True)
         top_for_rerank = ranked_by_decay[: cfg.rerank_top_n]
         docs = [(aid, self.manager.store.get(aid).text) for aid, _ in top_for_rerank]
         reranked = self.reranker.rerank(query.text, docs, top_k=cfg.rerank_top_n)
@@ -188,21 +208,41 @@ class SearchPipeline:
                          self._trace_items(reranked), len(reranked))
 
         # 7. Gom cụm sự kiện (F-07/F-14)
-        collapsed = collapse_clusters(reranked_ids, self.manager.deduper.cluster_of, cfg.max_per_cluster)
-        if explain:
-            self._append(trace, "dedup", "7. Gom cụm trùng lặp",
-                         f"{len(reranked_ids)} → {len(collapsed)} (bỏ {len(reranked_ids) - len(collapsed)} bài gần trùng, tối đa {cfg.max_per_cluster}/cụm)",
-                         self._trace_items([(a, rerank_score.get(a, 0.0)) for a in collapsed], with_cluster=True),
-                         len(collapsed))
+        print("[DEBUG] pipeline._run: step 7", flush=True)
+        dedup_enabled = query.dedup if query.dedup is not None else cfg.dedup_enabled
+        if dedup_enabled:
+            collapsed = collapse_clusters(reranked_ids, self.manager.deduper.cluster_of, cfg.max_per_cluster)
+            if explain:
+                self._append(trace, "dedup", "7. Gom cụm trùng lặp",
+                             f"{len(reranked_ids)} → {len(collapsed)} (bỏ {len(reranked_ids) - len(collapsed)} bài gần trùng, tối đa {cfg.max_per_cluster}/cụm)",
+                             self._trace_items([(a, rerank_score.get(a, 0.0)) for a in collapsed], with_cluster=True),
+                             len(collapsed))
+        else:
+            collapsed = reranked_ids
+            if explain:
+                self._append(trace, "dedup", "7. Gom cụm trùng lặp - Tắt",
+                             "Bỏ qua bước này",
+                             self._trace_items([(a, rerank_score.get(a, 0.0)) for a in collapsed]),
+                             len(collapsed))
 
         # 8. Đa dạng hóa MMR
-        pool = [(aid, rerank_score.get(aid, 0.0)) for aid in collapsed[: cfg.mmr_pool]]
-        final_ids = mmr(pool, self.manager.vector.get, lambda_=cfg.mmr_lambda, top_k=query.top_k)
-        if explain:
-            self._append(trace, "mmr", "8. Đa dạng hóa MMR",
-                         f"lambda={cfg.mmr_lambda}, pool={len(pool)} → top_k={query.top_k}",
-                         self._trace_items([(a, rerank_score.get(a, 0.0)) for a in final_ids]),
-                         len(final_ids))
+        print("[DEBUG] pipeline._run: step 8", flush=True)
+        mmr_enabled = query.mmr if query.mmr is not None else cfg.mmr_enabled
+        if mmr_enabled:
+            pool = [(aid, rerank_score.get(aid, 0.0)) for aid in collapsed[: cfg.mmr_pool]]
+            final_ids = mmr(pool, self.manager.vector.get, lambda_=cfg.mmr_lambda, top_k=query.top_k)
+            if explain:
+                self._append(trace, "mmr", "8. Đa dạng hóa MMR",
+                             f"lambda={cfg.mmr_lambda}, pool={len(pool)} → top_k={query.top_k}",
+                             self._trace_items([(a, rerank_score.get(a, 0.0)) for a in final_ids]),
+                             len(final_ids))
+        else:
+            final_ids = collapsed[:query.top_k]
+            if explain:
+                self._append(trace, "mmr", "8. Đa dạng hóa MMR - Tắt",
+                             f"Bỏ qua bước này, lấy thẳng top_k={query.top_k}",
+                             self._trace_items([(a, rerank_score.get(a, 0.0)) for a in final_ids]),
+                             len(final_ids))
 
         # 9. Dựng kết quả 5 trường + snippet bôi đậm (F-15)
         results: list[SearchResultItem] = []
@@ -242,37 +282,29 @@ class SearchPipeline:
         embed_name = type(self.manager.embedder).__name__
 
         if mode == "lexical":
-            hits = self.manager.lexical.search(parsed_text, top_k=k, allowed_ids=allowed_ids)
+            hits = self.manager.vector.search_lexical(parsed_text, top_k=k, allowed_ids=allowed_ids)
             if explain:
-                self._append(trace, "lexical", "3. Truy hồi từ khóa (BM25)",
+                self._append(trace, "lexical", "3. Truy hồi từ khóa (Sparse/BM25)",
                              f"{len(hits)} ứng viên", self._trace_items(hits), len(hits))
             return dict(hits)
 
         if mode == "semantic":
             qvec = self.manager.embedder.embed([parsed_text])[0]
-            hits = self.manager.vector.search(qvec, top_k=k, allowed_ids=allowed_ids)
+            hits = self.manager.vector.search_semantic(qvec, top_k=k, allowed_ids=allowed_ids)
             if explain:
-                self._append(trace, "dense", "3. Truy hồi ngữ nghĩa (vector)",
+                self._append(trace, "dense", "3. Truy hồi ngữ nghĩa (Dense Vector)",
                              f"embedder={embed_name}, {len(hits)} ứng viên",
                              self._trace_items(hits), len(hits))
             return dict(hits)
 
         if mode == "hybrid":
-            lex = self.manager.lexical.search(parsed_text, top_k=k, allowed_ids=allowed_ids)
             qvec = self.manager.embedder.embed([parsed_text])[0]
-            vec = self.manager.vector.search(qvec, top_k=k, allowed_ids=allowed_ids)
-            lex_ids = [aid for aid, _ in lex]
-            vec_ids = [aid for aid, _ in vec]
-            fused = rrf([lex_ids, vec_ids], k=cfg.rrf_k)
+            fused = self.manager.vector.search_hybrid(parsed_text, qvec, top_k=k, allowed_ids=allowed_ids)
+            fused_dict = dict(fused)
             if explain:
-                self._append(trace, "lexical", "3a. Truy hồi từ khóa (BM25)",
-                             f"{len(lex)} ứng viên", self._trace_items(lex), len(lex))
-                self._append(trace, "dense", "3b. Truy hồi ngữ nghĩa (vector)",
-                             f"embedder={embed_name}, {len(vec)} ứng viên",
-                             self._trace_items(vec), len(vec))
-                self._append(trace, "fusion", "4. Hợp nhất RRF (Reciprocal Rank Fusion)",
-                             f"k={cfg.rrf_k}, {len(fused)} bài sau hợp nhất",
-                             self._trace_items(sorted(fused.items(), key=lambda kv: -kv[1])), len(fused))
-            return fused
+                self._append(trace, "fusion", "3. Truy hồi Kết hợp (Milvus Hybrid Search)",
+                             f"{len(fused_dict)} bài trả về từ Milvus RRF",
+                             self._trace_items(sorted(fused_dict.items(), key=lambda kv: -kv[1])), len(fused_dict))
+            return fused_dict
 
         raise ValueError(f"mode không hợp lệ: {query.mode!r} (lexical|semantic|hybrid)")

@@ -65,7 +65,7 @@ def test_snapshot_restore(tmp_path):
     assert m2.restore(path) == 2
     assert m2.store.get("a1").category == "Kinh tế"
     assert m2.store.get("a1").tags == ["cpi"]
-    assert "a1" in m2.lexical and m2.vector.get("a2") is not None
+    assert m2.vector.get("a1") is not None and m2.vector.get("a2") is not None
 
 
 # ----------------------------------------------------------- reindex swap

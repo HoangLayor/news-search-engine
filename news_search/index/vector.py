@@ -25,6 +25,11 @@ class VectorIndex:
         # Cache ma trận (n, dim) + thứ tự id — invalidate khi add/remove
         self._matrix: np.ndarray | None = None
         self._ids: list[str] = []
+        
+        # Local metadata store & lexical index để tương thích interface Milvus
+        self._metadata: dict[str, Article] = {}
+        from news_search.index.lexical import LexicalIndex
+        self._lexical = LexicalIndex()
 
     # ------------------------------------------------------------------ utils
     def _as_normalized(self, vector: np.ndarray) -> np.ndarray:
@@ -48,7 +53,14 @@ class VectorIndex:
             else:
                 self._matrix = np.zeros((0, self.dim), dtype=np.float32)
 
-    # -------------------------------------------------------------------- API
+    # -------------------------------------------------------------------- API Store
+    def get_article(self, article_id: str) -> Article | None:
+        return self._metadata.get(article_id)
+
+    def mget_articles(self, article_ids: list[str]) -> dict[str, Article]:
+        return {aid: self._metadata[aid] for aid in article_ids if aid in self._metadata}
+
+    # -------------------------------------------------------------------- API Vector
     def add(self, article_id: str, vector: np.ndarray) -> None:
         """Thêm vector; trùng id -> replace (không phình index). Lưu bản L2-normalized."""
         self._vectors[article_id] = self._as_normalized(vector)
@@ -59,42 +71,48 @@ class VectorIndex:
         for aid, vec in zip(article_ids, vectors):
             self._vectors[aid] = self._as_normalized(vec)
         self._matrix = None
+        
+    def add_hybrid(self, article: Article, vector: np.ndarray) -> None:
+        self.add(article.article_id, vector)
+        self._metadata[article.article_id] = article
+        self._lexical.add(article)
+        
+    def add_batch_hybrid(self, articles: list[Article], vectors: list[np.ndarray]) -> None:
+        for art, vec in zip(articles, vectors):
+            self.add(art.article_id, vec)
+            self._metadata[art.article_id] = art
+            self._lexical.add(art)
 
     def remove(self, article_id: str) -> None:
         """Gỡ vector; id không tồn tại -> no-op."""
         if self._vectors.pop(article_id, None) is not None:
             self._matrix = None
+        self._metadata.pop(article_id, None)
+        self._lexical.remove(article_id)
 
     def get(self, article_id: str) -> np.ndarray | None:
         """Trả vector đã normalize (bản copy) hoặc None nếu không có."""
         vec = self._vectors.get(article_id)
         return None if vec is None else vec.copy()
 
-    def search(
+    def search_semantic(
         self,
         vector: np.ndarray,
         top_k: int = 10,
         allowed_ids: set[str] | None = None,
     ) -> list[tuple[str, float]]:
-        """Tìm top_k láng giềng theo cosine similarity, sắp giảm dần.
-
-        - Query vector zero -> [].
-        - ``allowed_ids != None`` -> chỉ xét doc trong tập đó.
-        - Tie-break theo article_id để kết quả deterministic.
-        """
+        """Tìm top_k láng giềng theo cosine similarity, sắp giảm dần."""
         if top_k <= 0 or not self._vectors:
             return []
         q = np.asarray(vector, dtype=np.float32).reshape(-1)
         if q.shape[0] != self.dim:
-            raise ValueError(
-                f"Vector dim {q.shape[0]} không khớp index dim {self.dim}"
-            )
+            raise ValueError(f"Vector dim {q.shape[0]} không khớp index dim {self.dim}")
         q_norm = float(np.linalg.norm(q))
         if q_norm == 0.0:
             return []
         q = q / q_norm
         self._ensure_matrix()
-        sims = self._matrix @ q  # cosine vì hai phía đều đã normalize
+        sims = self._matrix @ q
         pairs = [
             (aid, float(score))
             for aid, score in zip(self._ids, sims)
@@ -102,6 +120,29 @@ class VectorIndex:
         ]
         pairs.sort(key=lambda p: (-p[1], p[0]))
         return pairs[:top_k]
+
+    def search_lexical(
+        self, query_text: str, top_k: int = 10, allowed_ids: set[str] | None = None
+    ) -> list[tuple[str, float]]:
+        return self._lexical.search(query_text, top_k, allowed_ids)
+
+    def search(
+        self,
+        vector: np.ndarray,
+        top_k: int = 10,
+        allowed_ids: set[str] | None = None,
+    ) -> list[tuple[str, float]]:
+        """Alias backward compatibility cho test."""
+        return self.search_semantic(vector, top_k, allowed_ids)
+
+    def search_hybrid(
+        self, query_text: str, vector: np.ndarray, top_k: int = 10, allowed_ids: set[str] | None = None
+    ) -> list[tuple[str, float]]:
+        from news_search.search.fusion import rrf
+        lex = dict(self.search_lexical(query_text, top_k, allowed_ids))
+        sem = dict(self.search_semantic(vector, top_k, allowed_ids))
+        fused = rrf([list(lex.keys()), list(sem.keys())], k=60)
+        return [(k, float(v)) for k, v in list(fused.items())[:top_k]]
 
     def __len__(self) -> int:
         return len(self._vectors)

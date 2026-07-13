@@ -32,7 +32,7 @@ def client() -> TestClient:
 def test_healthz(client):
     body = client.get("/healthz").json()
     assert body["status"] == "ok"
-    assert body["articles"] == 29 and body["lexical"] == 29
+    assert body["articles"] == 29 and body["vectors"] == 29
 
 
 def test_search_tra_ve_array_5_truong(client):

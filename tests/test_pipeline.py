@@ -142,6 +142,5 @@ def test_unpublish_bien_mat(env):
     # DELETE mới thực sự gỡ khỏi MỌI chỉ mục
     manager.remove_article("eco-gold-01")
     assert manager.store.get("eco-gold-01") is None
-    assert "eco-gold-01" not in manager.lexical
     assert manager.vector.get("eco-gold-01") is None
     assert manager.deduper.cluster_of("eco-gold-01") is None

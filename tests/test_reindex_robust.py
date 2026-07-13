@@ -41,7 +41,6 @@ def test_index_article_rollback_khi_vector_loi():
 
     # KHÔNG lệch pha: không sót "bad" ở chỉ mục nào
     assert m.store.get("bad") is None
-    assert "bad" not in m.lexical
     assert m.deduper.cluster_of("bad") is None
     assert m.kg.entities_for_article("bad") == []
     assert m.generation == gen          # thất bại -> không tăng generation

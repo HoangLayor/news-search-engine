@@ -79,6 +79,9 @@ class SearchQuery:
     top_k: int = 10
     mode: str = "hybrid"  # xem SEARCH_MODES
     now: Optional[datetime] = None  # override thời điểm "hiện tại" (phục vụ test freshness)
+    dedup: Optional[bool] = None
+    time_decay: Optional[bool] = None
+    mmr: Optional[bool] = None
 
 
 @dataclass

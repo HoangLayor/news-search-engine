@@ -191,6 +191,11 @@ class Settings:
     # --- (GĐ5) A/B & interleaving ---
     experiment_enabled: bool = field(default_factory=lambda: _env_bool("EXPERIMENT_ENABLED", False))
 
+    # --- Feature Toggles (Bật/tắt chức năng phụ) ---
+    dedup_enabled: bool = field(default_factory=lambda: _env_bool("DEDUP_ENABLED", True))
+    time_decay_enabled: bool = field(default_factory=lambda: _env_bool("TIME_DECAY_ENABLED", True))
+    mmr_enabled: bool = field(default_factory=lambda: _env_bool("MMR_ENABLED", True))
+
     # --- Admin (blue-green reindex) ---
     admin_token: str = field(default_factory=lambda: _env("ADMIN_TOKEN", ""))  # rỗng -> route admin tắt
 

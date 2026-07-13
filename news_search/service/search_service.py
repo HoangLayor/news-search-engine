@@ -7,12 +7,11 @@ vấn trong lúc build vẫn phục vụ từ chỉ mục cũ, không gián đo�
 
 from __future__ import annotations
 
-import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
+import json
 import logging
 import itertools
 import time
+from pathlib import Path
 from threading import Lock
 from typing import Optional
 
@@ -34,18 +33,52 @@ class SearchService:
         self.metrics = MetricsCollector() if settings.metrics_enabled else None
         self.events = get_event_logger(settings)
         self._lock = Lock()
-        self.manager = IndexManager(settings)
-        self.pipeline = SearchPipeline(self.manager, settings)
-        # Dictionary lưu trạng thái tiến trình phục vụ UI/API polling
-        self.reindex_progress = {
-            "status": "idle",  # "idle" | "indexing" | "success" | "failed"
-            "processed": 0,
-            "total": 0,
-            "skipped": 0,
-            "error_msg": None,
-            "elapsed_seconds": 0.0,
-            "speed": 0.0
-        }
+        self.manager = IndexManager(settings, lazy_init=True)
+        self.pipeline = None
+        self._state_file = Path("data/reindex_progress.json")
+        self._state_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize default state if not exists
+        if not self._state_file.exists():
+            self._write_reindex_state({
+                "status": "idle",
+                "processed": 0,
+                "total": 0,
+                "skipped": 0,
+                "error_msg": None,
+                "elapsed_seconds": 0.0,
+                "speed": 0.0
+            })
+
+    def is_ready(self) -> bool:
+        """Kiểm tra xem hệ thống đã nạp xong các model AI chưa."""
+        return self.pipeline is not None
+
+    def load_resources(self) -> None:
+        """Nạp các mô hình AI (embedding, reranker) ở chế độ chạy ngầm."""
+        self.manager.load_models()
+        with self._lock:
+            if self.pipeline is None:
+                self.pipeline = SearchPipeline(self.manager, self.settings)
+
+    def _read_reindex_state(self) -> dict:
+        try:
+            return json.loads(self._state_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {"status": "idle", "processed": 0, "total": 0, "skipped": 0, "error_msg": None, "elapsed_seconds": 0.0, "speed": 0.0}
+
+    def _write_reindex_state(self, state: dict) -> None:
+        try:
+            # Atomic write via temp file (safe across workers)
+            tmp_file = self._state_file.with_suffix(".tmp")
+            tmp_file.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+            tmp_file.replace(self._state_file)
+        except Exception as exc:
+            _log.error(f"Lỗi ghi trạng thái reindex: {exc}")
+
+    @property
+    def reindex_progress(self) -> dict:
+        return self._read_reindex_state()
 
     def reindex(self, source=None, limit: Optional[int] = None) -> int:
         """Blue-green: build chỉ mục mới từ nguồn rồi swap. Trả số bài đã index.
@@ -55,7 +88,8 @@ class SearchService:
         - Lỗi index từng bài được ĐẾM + LOG (không nuốt im lặng); nếu cả đợt lỗi
           -> log ERROR để lộ nguyên nhân (vd dim mismatch, Milvus từ chối).
         """
-        self.reindex_progress.update({
+        state = self._read_reindex_state()
+        state.update({
             "status": "indexing",
             "processed": 0,
             "total": 0,
@@ -64,23 +98,28 @@ class SearchService:
             "elapsed_seconds": 0.0,
             "speed": 0.0
         })
+        self._write_reindex_state(state)
         t0 = time.perf_counter()
 
         # Mở nguồn trước (raise sớm nếu psycopg thiếu / DB không kết nối được)
         try:
             src = source or get_source(self.settings)
         except Exception as exc:
-            self.reindex_progress.update({
+            state = self._read_reindex_state()
+            state.update({
                 "status": "failed",
                 "error_msg": f"Không kết nối được nguồn dữ liệu: {type(exc).__name__}: {exc}"
             })
+            self._write_reindex_state(state)
             raise
 
         try:
             # Thử lấy tổng số bài để phục vụ phần trăm tiến độ
             try:
                 total_count = src.count()
-                self.reindex_progress["total"] = limit if (limit and limit < total_count) else total_count
+                state = self._read_reindex_state()
+                state["total"] = limit if (limit and limit < total_count) else total_count
+                self._write_reindex_state(state)
             except Exception:
                 pass
 
@@ -122,20 +161,27 @@ class SearchService:
 
                 # Cập nhật trạng thái tiến độ thời gian thực
                 elapsed = time.perf_counter() - t0
-                self.reindex_progress.update({
+                speed = n / elapsed if elapsed > 0 else 0.0
+                state = self._read_reindex_state()
+                state.update({
                     "processed": n,
                     "skipped": skipped,
                     "elapsed_seconds": elapsed,
-                    "speed": n / elapsed if elapsed > 0 else 0.0
+                    "speed": speed
                 })
+                self._write_reindex_state(state)
+                total_target = state.get("total") or "unknown"
+                _log.info(f"  -> [Reindex] Đã xử lý: {n}/{total_target} bài | Tốc độ: {speed:.1f} bài/giây (bỏ qua: {skipped})")
 
                 if limit and n >= limit:
                     break
         except Exception as exc:
-            self.reindex_progress.update({
+            state = self._read_reindex_state()
+            state.update({
                 "status": "failed",
                 "error_msg": f"Lỗi trong quá trình index: {type(exc).__name__}: {exc}"
             })
+            self._write_reindex_state(state)
             raise
         finally:
             if source is None:
@@ -151,13 +197,18 @@ class SearchService:
 
         with self._lock:  # hoán đổi nguyên tử, tái dùng reranker của pipeline cũ
             self.manager = new_manager
-            self.pipeline = SearchPipeline(new_manager, self.settings,
-                                           reranker=self.pipeline.reranker)
+            if self.pipeline is not None:
+                self.pipeline = SearchPipeline(new_manager, self.settings,
+                                               reranker=self.pipeline.reranker)
+            else:
+                self.pipeline = SearchPipeline(new_manager, self.settings)
         
-        self.reindex_progress.update({
+        state = self._read_reindex_state()
+        state.update({
             "status": "success",
             "processed": n,
             "skipped": skipped,
             "elapsed_seconds": time.perf_counter() - t0
         })
+        self._write_reindex_state(state)
         return n

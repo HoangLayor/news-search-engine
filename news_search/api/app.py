@@ -16,6 +16,8 @@ import hmac
 import logging
 import time
 import uuid
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -60,26 +62,15 @@ def _variant(q: str) -> str:
     return "B" if int(hashlib.md5(q.encode("utf-8")).hexdigest(), 16) % 2 else "A"
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Tạo FastAPI app; dùng SearchService (hỗ trợ reindex blue-green + metrics + feedback)."""
-    settings = settings or Settings.from_env()
-    svc = SearchService(settings)
-
-    app = FastAPI(title="News Search Engine", version="0.2.0")
-    app.state.service = svc
-
-    # Tự nạp bài mẫu lúc khởi động (tiện demo Docker): chỉ khi bật cờ, nguồn sample
-    # và chỉ mục đang rỗng — an toàn, không lặp.
+def _autoload(svc: SearchService, settings: Settings):
     if settings.autoload_sample and settings.source == "sample" and len(svc.manager.store) == 0:
         try:
             from news_search.sources import get_source
-
             src = get_source(settings)
-        except Exception:  # không mở được nguồn -> app vẫn khởi động (chỉ mục rỗng)
+        except Exception:
             _log.exception("Autoload: không mở được nguồn mẫu")
         else:
             try:
-                # Nạp resilient TỪNG bài: 1 bài lỗi không làm hỏng cả đợt (khác bulk_index)
                 for raw in src.fetch_all(settings.ingest_batch_size):
                     try:
                         svc.manager.index_article(raw)
@@ -88,10 +79,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             finally:
                 src.close()
 
+
+async def background_init(app: FastAPI, settings: Settings):
+    loop = asyncio.get_running_loop()
+    svc = app.state.service
+    try:
+        # Tải mô hình ngầm
+        await loop.run_in_executor(None, svc.load_resources)
+        
+        # Tự nạp bài mẫu sau khi mô hình đã sẵn sàng (chạy ở thread riêng để không block API)
+        await loop.run_in_executor(None, _autoload, svc, settings)
+    except Exception as exc:
+        _log.error(f"Khởi tạo ngầm thất bại: {exc}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = app.state.settings
+    asyncio.create_task(background_init(app, settings))
+    yield
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Tạo FastAPI app; dùng SearchService (hỗ trợ reindex blue-green + metrics + feedback)."""
+    settings = settings or Settings.from_env()
+    svc = SearchService(settings)
+
+    app = FastAPI(title="News Search Engine", version="0.2.0", lifespan=lifespan)
+    app.state.service = svc
+    app.state.settings = settings
+
     # ---------------------------------------------------------------- ingest
 
     @app.post("/articles", status_code=201)
     def index_article(raw: dict = Body(...)) -> dict:
+        if not svc.is_ready():
+            raise HTTPException(status_code=503, detail="Hệ thống đang tải AI model, vui lòng thử lại sau...")
         try:
             article = svc.manager.index_article(raw)
         except ValueError as exc:
@@ -100,6 +123,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/articles/bulk")
     def index_bulk(raws: list[dict] = Body(...)) -> dict:
+        if not svc.is_ready():
+            raise HTTPException(status_code=503, detail="Hệ thống đang tải AI model, vui lòng thử lại sau...")
         try:
             n = svc.manager.bulk_index(raws)
         except ValueError as exc:
@@ -121,9 +146,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---------------------------------------------------------------- search
 
     @app.get("/search")
-    def search(
+    async def search(
         response: Response,
-        q: str = Query("", description="Truy vấn (từ khóa hoặc câu hỏi)"),
+        q: str = Query("", max_length=500, description="Truy vấn (từ khóa hoặc câu hỏi)"),
         mode: str = Query("hybrid"),
         top_k: int = Query(10, ge=1, le=100),
         author: Optional[str] = Query(None),
@@ -131,8 +156,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         source: Optional[str] = Query(None),
         date_from: Optional[str] = Query(None),
         date_to: Optional[str] = Query(None),
+        dedup: Optional[bool] = Query(None, description="Bật/tắt dedup"),
+        time_decay: Optional[bool] = Query(None, description="Bật/tắt time-decay"),
+        mmr: Optional[bool] = Query(None, description="Bật/tắt MMR"),
     ) -> list[dict]:
         """Trả JSON array các bài viết xếp hạng — mỗi phần tử ĐÚNG 5 trường."""
+        if not svc.is_ready():
+            raise HTTPException(status_code=503, detail="Hệ thống đang tải AI model, vui lòng thử lại sau...")
         if not q or not q.strip():
             raise HTTPException(status_code=400, detail="Thiếu truy vấn 'q'")
         if mode not in ("lexical", "semantic", "hybrid"):
@@ -142,10 +172,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             date_from=_parse_dt(date_from, "date_from"),
             date_to=_parse_dt(date_to, "date_to"),
         )
-        query = SearchQuery(text=q, filters=filters, top_k=top_k, mode=mode)
+        query = SearchQuery(
+            text=q, filters=filters, top_k=top_k, mode=mode,
+            dedup=dedup, time_decay=time_decay, mmr=mmr
+        )
+        _log.info(f"[DEBUG] /search endpoint hit with q={q}")
         t0 = time.perf_counter()
         try:
-            results = svc.pipeline.search(query)
+            _log.info("[DEBUG] Calling svc.pipeline.search(query) with to_thread")
+            import asyncio
+            results = await asyncio.to_thread(svc.pipeline.search, query)
+            _log.info("[DEBUG] Pipeline search returned")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         latency_ms = (time.perf_counter() - t0) * 1000.0
@@ -176,6 +213,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         source: Optional[str] = Query(None),
         date_from: Optional[str] = Query(None),
         date_to: Optional[str] = Query(None),
+        dedup: Optional[bool] = Query(None, description="Bật/tắt dedup"),
+        time_decay: Optional[bool] = Query(None, description="Bật/tắt time-decay"),
+        mmr: Optional[bool] = Query(None, description="Bật/tắt MMR"),
     ) -> dict:
         """Giải thích pipeline: trả {query, mode, results, trace} — từng bước xử lý
         + kết quả trung gian (bỏ qua cache). Phục vụ UI quan sát cách xếp hạng."""
@@ -188,7 +228,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             date_from=_parse_dt(date_from, "date_from"),
             date_to=_parse_dt(date_to, "date_to"),
         )
-        query = SearchQuery(text=q, filters=filters, top_k=top_k, mode=mode)
+        query = SearchQuery(
+            text=q, filters=filters, top_k=top_k, mode=mode,
+            dedup=dedup, time_decay=time_decay, mmr=mmr
+        )
         try:
             return svc.pipeline.explain(query)
         except ValueError as exc:
@@ -284,12 +327,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz")
     def healthz() -> dict:
+        is_ready = svc.is_ready()
         return {
-            "status": "ok",
-            "articles": len(svc.manager.store),
-            "lexical": len(svc.manager.lexical),
-            "vectors": len(svc.manager.vector),
-            "generation": svc.manager.generation,
+            "status": "ok" if is_ready else "starting",
+            "ready": is_ready,
+            "articles": len(svc.manager.vector) if (is_ready and svc.manager.store.lazy) else len(svc.manager.store),
+            "vectors": len(svc.manager.vector) if is_ready else 0,
+            "generation": getattr(svc.manager, "generation", 0),
             "embedder": settings.embedder,
             "vector_backend": settings.vector_backend,
             "features": {
@@ -297,7 +341,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "cache": settings.cache_enabled,
                 "metrics": settings.metrics_enabled,
                 "experiment": settings.experiment_enabled,
-                "qu": svc.pipeline.understander.enabled,
+                "qu": svc.pipeline.understander.enabled if is_ready else False,
             },
         }
 
@@ -306,9 +350,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/stats")
     def stats() -> dict:
         """Số liệu tổng hợp cho UI (counts + metrics + feedback CTR)."""
+        is_ready = svc.is_ready()
         return {
             "counts": {
-                "articles": len(svc.manager.store),
+                "articles": len(svc.manager.vector) if (is_ready and svc.manager.store.lazy) else len(svc.manager.store),
                 "generation": svc.manager.generation,
             },
             "backends": {"embedder": settings.embedder, "vector": settings.vector_backend,
@@ -316,7 +361,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "features": {
                 "feedback": settings.feedback_enabled, "cache": settings.cache_enabled,
                 "metrics": settings.metrics_enabled, "experiment": settings.experiment_enabled,
-                "qu": svc.pipeline.understander.enabled, "admin": bool(settings.admin_token),
+                "qu": svc.pipeline.understander.enabled if is_ready else False, "admin": bool(settings.admin_token),
             },
             "metrics": svc.metrics.snapshot() if svc.metrics else None,
             "feedback": _feedback_stats(settings),
