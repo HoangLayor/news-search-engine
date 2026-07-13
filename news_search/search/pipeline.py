@@ -8,6 +8,7 @@ Ghép các module thành luồng 9 bước:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from news_search.config import Settings
@@ -40,11 +41,11 @@ class SearchPipeline:
         # (GĐ5) Cache truy vấn nóng — None nếu CACHE_ENABLED=false.
         self.cache = get_cache(self.settings)
 
-    def _cache_key(self, query: SearchQuery, effective_text: str) -> str:
+    def _cache_key(self, query: SearchQuery, lexical_text: str, semantic_text: str) -> str:
         """Khóa cache: gồm generation chỉ mục -> mọi thay đổi index tự vô hiệu cache."""
         f = query.filters
         return "|".join(str(x) for x in (
-            self.manager.generation, query.mode, query.top_k, effective_text,
+            self.manager.generation, query.mode, query.top_k, lexical_text, semantic_text,
             f.author, f.category, f.source, f.date_from, f.date_to,
         ))
 
@@ -89,9 +90,10 @@ class SearchPipeline:
         """Pipeline dùng chung cho search() và explain(). trace != None -> ghi bước."""
         cfg = self.settings
         explain = trace is not None
+        now = query.now or datetime.now(timezone.utc)
 
         # 1. Query understanding (rỗng -> ValueError, propagate lên caller)
-        print("[DEBUG] pipeline._run: step 1", flush=True)
+        print("[DEBUG] pipeline._run: step 1 query.text ", query.text, flush=True)
         parsed = parse_query(query.text)
         if not parsed.tokens:
             if explain:
@@ -100,37 +102,57 @@ class SearchPipeline:
             return []
 
         # 1b. Query understanding (mặc định tắt -> giữ nguyên query.text)
-        print("[DEBUG] pipeline._run: step 1b", flush=True)
-        effective_text = query.text
+        print("[DEBUG] pipeline._run: step 1b understander.enabled ", self.understander.enabled, flush=True)
+        lexical_text = query.text
+        semantic_text = query.text
         try:
-            uinfo = self.understander.understand(parsed) if self.understander.enabled else None
+            uinfo = self.understander.understand(parsed, now=now) if self.understander.enabled else None
             print("[DEBUG] pipeline._run: uinfo =", uinfo, flush=True)
         except Exception as e:
             print("[DEBUG] pipeline._run: understander error:", e, flush=True)
             raise
         if uinfo is not None:
-            effective_text = uinfo.effective_text
+            lexical_text = uinfo.lexical_text
+            semantic_text = uinfo.semantic_text
         if explain:
             note = f"tokens={parsed.tokens} · fresh_intent={parsed.fresh_intent}"
             if uinfo is not None:
-                note += (f" · sửa lỗi={uinfo.corrections or '∅'} · mở rộng={uinfo.expansions or '∅'}"
-                         f" · truy vấn hiệu dụng='{effective_text}'")
+                note += (f" · sửa lỗi={uinfo.corrections or '∅'} · cụm từ={uinfo.key_phrases or '∅'}"
+                         f" · mở rộng={uinfo.expansions or '∅'}"
+                         f" · truy vấn lexical='{lexical_text}' · truy vấn semantic='{semantic_text}'")
+                md = uinfo.metadata
+                if md.category or md.entities or md.date_from or md.date_to:
+                    note += (f" · metadata: chủ_đề={md.category or '∅'}, thực_thể={md.entities or '∅'}"
+                             f", từ_ngày={md.date_from or '∅'}, đến_ngày={md.date_to or '∅'}")
             else:
                 note += " · (query-understanding tắt)"
             self._append(trace, "understand", "1. Hiểu truy vấn", note)
 
-        # 1c. Cache (CHỈ khi không explain -> explain luôn tính mới để quan sát)
+        # 1c. Áp khoảng ngày do LLM suy luận — CHỈ khi người dùng CHƯA khai báo
+        if uinfo is not None and (uinfo.metadata.date_from or uinfo.metadata.date_to):
+            new_date_from = query.filters.date_from or uinfo.metadata.date_from
+            new_date_to = query.filters.date_to or uinfo.metadata.date_to
+            if new_date_from != query.filters.date_from or new_date_to != query.filters.date_to:
+                query = replace(query, filters=replace(
+                    query.filters, date_from=new_date_from, date_to=new_date_to
+                ))
+                if explain:
+                    self._append(trace, "understand_dates", "1c. Khoảng ngày suy luận",
+                                 f"date_from={new_date_from}, date_to={new_date_to} "
+                                 "(LLM suy luận, người dùng chưa khai báo)")
+
+        # 1d. Cache (CHỈ khi không explain -> explain luôn tính mới để quan sát)
         cache_key = None
         if not explain and self.cache is not None and not (
             parsed.fresh_intent and cfg.cache_bypass_fresh
         ):
-            cache_key = self._cache_key(query, effective_text)
+            cache_key = self._cache_key(query, lexical_text, semantic_text)
             cached = self.cache.get(cache_key)
             if cached is not None:
                 return [SearchResultItem(**d) for d in cached]
 
         # 2. Lọc metadata (F-12)
-        print("[DEBUG] pipeline._run: step 2", flush=True)
+        print("[DEBUG] pipeline._run: step 2 filter_ids query.filters", query.filters, flush=True)
         allowed_ids = self.manager.store.filter_ids(query.filters)
         if allowed_ids is not None and not allowed_ids:
             if explain:
@@ -142,8 +164,8 @@ class SearchPipeline:
                          else f"{len(allowed_ids)} bài thỏa bộ lọc")
 
         # 3-4. Retrieval + fusion (ghi bước bên trong _retrieve)
-        print("[DEBUG] pipeline._run: step 3-4", flush=True)
-        base_scores = self._retrieve(query, effective_text, allowed_ids, trace)
+        print("[DEBUG] pipeline._run: step 3-4 lexical_text ", lexical_text, "semantic_text", semantic_text, flush=True)
+        base_scores = self._retrieve(query, lexical_text, semantic_text, allowed_ids, trace)
         print("[DEBUG] pipeline._run: retrieved", len(base_scores), flush=True)
         if not base_scores:
             if explain:
@@ -176,7 +198,6 @@ class SearchPipeline:
         # 5. Time-decay / QDF (F-13)
         time_decay_enabled = query.time_decay if query.time_decay is not None else cfg.time_decay_enabled
         if time_decay_enabled:
-            now = query.now or datetime.now(timezone.utc)
             half_life = cfg.fresh_half_life_days if parsed.fresh_intent else cfg.half_life_days
             decayed = apply_time_decay(
                 base_scores,
@@ -196,8 +217,8 @@ class SearchPipeline:
                              self._trace_items(ranked_by_decay), len(ranked_by_decay))
 
         # 6. Rerank tinh trên top-N theo điểm đã decay
-        print("[DEBUG] pipeline._run: step 6", flush=True)
         top_for_rerank = ranked_by_decay[: cfg.rerank_top_n]
+        print("[DEBUG] pipeline._run: step 6 top_for_rerank ", top_for_rerank, flush=True)
         docs = [(aid, self.manager.store.get(aid).text) for aid, _ in top_for_rerank]
         reranked = self.reranker.rerank(query.text, docs, top_k=cfg.rerank_top_n)
         rerank_score = dict(reranked)
@@ -208,7 +229,7 @@ class SearchPipeline:
                          self._trace_items(reranked), len(reranked))
 
         # 7. Gom cụm sự kiện (F-07/F-14)
-        print("[DEBUG] pipeline._run: step 7", flush=True)
+        print("[DEBUG] pipeline._run: step 7 reranked_ids ", reranked_ids, flush=True)
         dedup_enabled = query.dedup if query.dedup is not None else cfg.dedup_enabled
         if dedup_enabled:
             collapsed = collapse_clusters(reranked_ids, self.manager.deduper.cluster_of, cfg.max_per_cluster)
@@ -226,7 +247,7 @@ class SearchPipeline:
                              len(collapsed))
 
         # 8. Đa dạng hóa MMR
-        print("[DEBUG] pipeline._run: step 8", flush=True)
+        print("[DEBUG] pipeline._run: step 8 collapsed ", collapsed, flush=True)
         mmr_enabled = query.mmr if query.mmr is not None else cfg.mmr_enabled
         if mmr_enabled:
             pool = [(aid, rerank_score.get(aid, 0.0)) for aid in collapsed[: cfg.mmr_pool]]
@@ -268,8 +289,8 @@ class SearchPipeline:
     # ------------------------------------------------------------------ helpers
 
     def _retrieve(
-        self, query: SearchQuery, parsed_text: str, allowed_ids: set[str] | None,
-        trace: list | None = None,
+        self, query: SearchQuery, lexical_text: str, semantic_text: str,
+        allowed_ids: set[str] | None, trace: list | None = None,
     ) -> dict[str, float]:
         """Sinh bảng điểm ứng viên theo chế độ (lexical/semantic/hybrid).
 
@@ -282,14 +303,14 @@ class SearchPipeline:
         embed_name = type(self.manager.embedder).__name__
 
         if mode == "lexical":
-            hits = self.manager.vector.search_lexical(parsed_text, top_k=k, allowed_ids=allowed_ids)
+            hits = self.manager.vector.search_lexical(lexical_text, top_k=k, allowed_ids=allowed_ids)
             if explain:
                 self._append(trace, "lexical", "3. Truy hồi từ khóa (Sparse/BM25)",
                              f"{len(hits)} ứng viên", self._trace_items(hits), len(hits))
             return dict(hits)
 
         if mode == "semantic":
-            qvec = self.manager.embedder.embed([parsed_text])[0]
+            qvec = self.manager.embedder.embed([semantic_text])[0]
             hits = self.manager.vector.search_semantic(qvec, top_k=k, allowed_ids=allowed_ids)
             if explain:
                 self._append(trace, "dense", "3. Truy hồi ngữ nghĩa (Dense Vector)",
@@ -298,8 +319,8 @@ class SearchPipeline:
             return dict(hits)
 
         if mode == "hybrid":
-            qvec = self.manager.embedder.embed([parsed_text])[0]
-            fused = self.manager.vector.search_hybrid(parsed_text, qvec, top_k=k, allowed_ids=allowed_ids)
+            qvec = self.manager.embedder.embed([semantic_text])[0]
+            fused = self.manager.vector.search_hybrid(lexical_text, qvec, top_k=k, allowed_ids=allowed_ids)
             fused_dict = dict(fused)
             if explain:
                 self._append(trace, "fusion", "3. Truy hồi Kết hợp (Milvus Hybrid Search)",

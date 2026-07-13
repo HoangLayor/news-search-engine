@@ -9,10 +9,10 @@ from datetime import datetime, timedelta, timezone
 
 from news_search.config import Settings
 from news_search.index.manager import IndexManager
-from news_search.models import SearchQuery
+from news_search.models import SearchFilters, SearchQuery
 from news_search.search.pipeline import SearchPipeline
 from news_search.search.query import parse_query
-from news_search.search.understanding import QueryUnderstander, SpellCorrector
+from news_search.search.understanding import QueryMetadata, QueryUnderstander, SpellCorrector, UnderstoodQuery
 
 NOW = datetime(2026, 7, 7, 12, 0, tzinfo=timezone(timedelta(hours=7)))
 
@@ -216,3 +216,35 @@ def test_understander_llm_category_entities_informational_only(monkeypatch):
     # category/entities KHÔNG rò rỉ vào lexical_text/semantic_text
     assert "kinh te" not in out.lexical_text
     assert "Ngan hang Nha nuoc" not in out.lexical_text
+
+
+def test_pipeline_date_metadata_autofills_when_unset(monkeypatch):
+    s = Settings(embedder="hash", vector_backend="local", qu_spellcorrect=True)
+    m = IndexManager(s)
+    m.index_article({"article_id": "old", "title": "Lam phat cu",
+                     "body": "tin cu ve kinh te", "url": "/old",
+                     "published_at": "2020-01-01T00:00:00+07:00"})
+    m.index_article({"article_id": "new", "title": "Lam phat moi",
+                     "body": "tin moi ve kinh te", "url": "/new",
+                     "published_at": "2026-07-07T00:00:00+07:00"})
+    p = SearchPipeline(m, s)
+
+    fixed_date_from = datetime(2026, 7, 6, 0, 0, tzinfo=timezone(timedelta(hours=7)))
+    fixed_date_to = datetime(2026, 7, 7, 23, 59, 59, 999999, tzinfo=timezone(timedelta(hours=7)))
+    fake_result = UnderstoodQuery(
+        lexical_text="lam phat", semantic_text="lam phat",
+        metadata=QueryMetadata(date_from=fixed_date_from, date_to=fixed_date_to),
+    )
+    monkeypatch.setattr(p.understander, "understand", lambda parsed, now=None: fake_result)
+
+    # Chưa khai báo date_from/date_to -> LLM tự điền -> chỉ còn bài "new"
+    res = p.search(SearchQuery("lam phat", mode="lexical", now=NOW))
+    assert [r.article_id for r in res] == ["new"]
+
+    # Đã khai báo date_from riêng -> giữ nguyên, LLM KHÔNG ghi đè
+    user_date_from = datetime(2019, 1, 1, tzinfo=timezone(timedelta(hours=7)))
+    res2 = p.search(SearchQuery(
+        "lam phat", mode="lexical", now=NOW,
+        filters=SearchFilters(date_from=user_date_from),
+    ))
+    assert {r.article_id for r in res2} == {"old", "new"}
