@@ -71,7 +71,7 @@ def _parse_date_bound(date_str: Optional[str], now: datetime, end_of_day: bool) 
         return None
     try:
         d = datetime.fromisoformat(date_str).date()
-    except ValueError:
+    except (ValueError, TypeError):
         return None
     if end_of_day:
         return datetime(d.year, d.month, d.day, 23, 59, 59, 999999, tzinfo=now.tzinfo)

@@ -178,6 +178,28 @@ def test_understander_llm_malformed_date_degrades(monkeypatch):
     assert out.semantic_text == "lam phat"
 
 
+def test_understander_llm_date_from_number_degrades(monkeypatch):
+    """Khi OpenAI trả date_from dưới dạng số (không phải string),
+    _parse_date_bound bắt TypeError và trả None, nhưng LLM result còn lại (corrections, etc) vẫn giữ."""
+    payload = json.dumps({
+        "corrected_query": "lam phat",
+        "corrections": {"phatt": "phat"},
+        "key_phrases": ["lam phat"],
+        "metadata": {"date_from": 20260706},  # JSON number, không phải string
+    })
+    _inject_fake_openai(monkeypatch, payload)
+    u = QueryUnderstander(
+        Settings(openai_api_key="sk-test", qu_spellcorrect=True),
+        vocab_provider=lambda: {},
+    )
+    out = u.understand(parse_query("lam phatt"), now=NOW)
+    # date_from là số -> TypeError -> None; nhưng corrections/key_phrases/semantic_text vẫn có
+    assert out.metadata.date_from is None
+    assert out.corrections == {"phatt": "phat"}
+    assert out.key_phrases == ["lam phat"]
+    assert out.semantic_text == "lam phat"
+
+
 def test_understander_llm_category_entities_informational_only(monkeypatch):
     payload = json.dumps({
         "corrected_query": "lam phat thang 6",
