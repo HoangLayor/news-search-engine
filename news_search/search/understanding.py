@@ -14,12 +14,16 @@ chỉ mục BM25 -> không cần từ điển ngoài, tự thích ứng theo kho
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from news_search.config import Settings
 from news_search.ingest.tokenizer import fold_diacritics
 from news_search.models import ParsedQuery
+
+_log = logging.getLogger(__name__)
+
 
 # Ký tự dùng sinh biến thể (token đã fold -> chỉ còn a-z0-9)
 _ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -125,6 +129,15 @@ class QueryUnderstander:
 
     def understand(self, parsed: ParsedQuery) -> UnderstoodQuery:
         """Sinh truy vấn hiệu dụng từ ParsedQuery theo các cờ đang bật."""
+        # Ưu tiên gọi OpenAI API nếu có API key và bật các cờ tương ứng
+        if self.settings.openai_api_key and (
+            self.settings.qu_spellcorrect or self.settings.qu_expansion or self.settings.qu_llm_rewrite
+        ):
+            llm_res = self._llm_understand(parsed.normalized)
+            if llm_res is not None:
+                return llm_res
+
+        # Fallback về local Norvig + synonyms khi không có OpenAI key hoặc API gọi lỗi
         corrector = self._get_corrector()
         out_tokens: list[str] = []
         corrections: dict[str, str] = {}
@@ -154,6 +167,77 @@ class QueryUnderstander:
 
         return UnderstoodQuery(effective, corrections, expansions, rewritten)
 
+    def _llm_understand(self, text: str) -> Optional[UnderstoodQuery]:
+        """Sử dụng OpenAI để vừa sửa lỗi chính tả, vừa mở rộng truy vấn đồng nghĩa trong một API call."""
+        try:
+            from openai import OpenAI
+
+            key = self.settings.openai_api_key
+            if not key:
+                return None
+            client = OpenAI(api_key=key)
+
+            tasks = []
+            if self.settings.qu_spellcorrect:
+                tasks.append("- Phát hiện và sửa lỗi chính tả/lỗi gõ phím tiếng Việt trong câu truy vấn (không tự ý thêm từ mới vào trường corrected_query).")
+            if self.settings.qu_expansion:
+                tasks.append("- Tìm các từ đồng nghĩa hoặc viết tắt/thuật ngữ tương đương liên quan để mở rộng truy vấn tìm kiếm.")
+            if self.settings.qu_llm_rewrite:
+                tasks.append("- Viết lại truy vấn cho rõ ràng, giữ nguyên ý định tìm kiếm ban đầu.")
+
+            if not tasks:
+                return None
+
+            prompt_instructions = "\n".join(tasks)
+            system_prompt = (
+                "Bạn là một trợ lý tối ưu hóa truy vấn tìm kiếm tiếng Việt chuyên nghiệp.\n"
+                "Nhiệm vụ của bạn là nhận vào câu truy vấn từ người dùng và thực hiện các nhiệm vụ sau:\n"
+                f"{prompt_instructions}\n\n"
+                "Trả về kết quả duy nhất dưới dạng một đối tượng JSON hợp lệ có cấu trúc chính xác như sau:\n"
+                "{\n"
+                "  \"corrected_query\": \"câu truy vấn sau khi đã được sửa lỗi chính tả\",\n"
+                "  \"corrections\": {\"từ_gõ_sai\": \"từ_gõ_đúng\"},\n"
+                "  \"expansions\": [\"từ_đồng_nghĩa_1\", \"từ_đồng_nghĩa_2\"]\n"
+                "}\n"
+                "Lưu ý: Nếu không bật tính năng nào tương ứng, hãy để trường giá trị rỗng/mảng rỗng. Chỉ trả về duy nhất chuỗi JSON hợp lệ, không giải thích gì thêm."
+            )
+
+            # Sử dụng gpt-4o-mini thay vì gpt-4.1-mini để chạy thực tế chính xác
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text},
+                ],
+                max_tokens=256,
+                temperature=0.0,
+                response_format={"type": "json_object"}
+            )
+
+            res_content = (resp.choices[0].message.content or "").strip()
+            data = json.loads(res_content)
+
+            corrected_query = data.get("corrected_query", text)
+            corrections = data.get("corrections", {})
+            expansions = data.get("expansions", [])
+
+            # Tạo effective_text kết hợp corrected_query và các synonym expansions
+            effective = corrected_query
+            if expansions:
+                unique_expansions = [syn for syn in expansions if syn.lower() not in effective.lower()]
+                if unique_expansions:
+                    effective = f"{effective} {' '.join(unique_expansions)}"
+
+            return UnderstoodQuery(
+                effective_text=effective.strip(),
+                corrections=corrections,
+                expansions=expansions,
+                rewritten=True
+            )
+        except Exception as e:
+            _log.error(f"Lỗi gọi OpenAI cho Query Understanding: {e}")
+            return None
+
     def _llm_rewrite(self, text: str) -> Optional[str]:  # pragma: no cover - cần API
         """Viết lại truy vấn bằng LLM (OpenAI); thiếu package/khóa -> None (degrade)."""
         try:
@@ -164,7 +248,7 @@ class QueryUnderstander:
                 return None
             client = OpenAI(api_key=key)
             resp = client.chat.completions.create(
-                model="gpt-4.1-mini",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Viết lại truy vấn tìm kiếm tiếng Việt "
                      "cho rõ ràng, giữ nguyên ý định. Chỉ trả về truy vấn, không giải thích."},

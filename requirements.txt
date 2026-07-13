@@ -15,7 +15,7 @@ httpx>=0.27
 # opensearch-py>=2.6        # LEXICAL_BACKEND=opensearch
 # pymilvus>=2.4             # VECTOR_BACKEND=milvus (chỉ mục HNSW)
 # neo4j>=5.20               # Knowledge graph production
-# openai>=1.30              # EMBEDDER=openai (text-embedding-3-large)
+openai>=1.30               # EMBEDDER=openai (text-embedding-3-large) và QU_* (spellcheck/expansion/rewrite qua GPT)
 # FlagEmbedding>=1.2        # EMBEDDER=bge (BGE-m3) và/hoặc RERANKER=bge (bge-reranker-v2-m3)
 # sentence-transformers>=3  # EMBEDDER=bge (fallback nếu không dùng FlagEmbedding)
 # underthesea>=6.8          # Tách từ + NER tiếng Việt nâng cao
