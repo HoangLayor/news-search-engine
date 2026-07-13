@@ -6,6 +6,8 @@ Tất cả bật/tắt qua cờ (mặc định TẮT). Nguyên tắc "responsibl
 - Sửa lỗi làm trên bản FOLDED (khớp chỉ mục không dấu); token đúng giữ nguyên chữ
   có dấu để snippet/BGE không mất thông tin.
 - Thiếu OpenAI/khóa -> bỏ qua rewrite (degrade), không crash.
+- metadata (category/entities) chỉ mang tính tham khảo — KHÔNG auto-filter; chỉ
+  date_from/date_to auto-fill vào SearchFilters khi người dùng CHƯA khai báo.
 
 Corrector: thuật toán Norvig (edit-distance 1..2) trên từ điển tần suất lấy từ
 chỉ mục BM25 -> không cần từ điển ngoài, tự thích ứng theo kho bài.
@@ -16,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from news_search.config import Settings
@@ -53,6 +56,28 @@ def _edits1(word: str) -> set[str]:
     return set(deletes + transposes + replaces + inserts)
 
 
+def _dedup_merge(base: str, candidates: list[str]) -> str:
+    """Nối thêm các cụm CHƯA xuất hiện trong base (so sánh không phân biệt hoa/thường)."""
+    text = base
+    for c in candidates:
+        if c and c.lower() not in text.lower():
+            text = f"{text} {c}"
+    return text.strip()
+
+
+def _parse_date_bound(date_str: Optional[str], now: datetime, end_of_day: bool) -> Optional[datetime]:
+    """Chuyển 'YYYY-MM-DD' (LLM trả) -> datetime có tzinfo khớp SearchFilters; None nếu rỗng/sai định dạng."""
+    if not date_str:
+        return None
+    try:
+        d = datetime.fromisoformat(date_str).date()
+    except ValueError:
+        return None
+    if end_of_day:
+        return datetime(d.year, d.month, d.day, 23, 59, 59, 999999, tzinfo=now.tzinfo)
+    return datetime(d.year, d.month, d.day, tzinfo=now.tzinfo)
+
+
 class SpellCorrector:
     """Sửa lỗi chính tả trên vocab tần suất (folded). Chỉ sửa từ OOV."""
 
@@ -78,12 +103,26 @@ class SpellCorrector:
 
 
 @dataclass
+class QueryMetadata:
+    """Metadata trích xuất từ truy vấn — CHỈ mang tính tham khảo (không auto-filter),
+    trừ date_from/date_to (auto-fill vào SearchFilters nếu người dùng chưa khai báo)."""
+
+    category: Optional[str] = None
+    entities: list[str] = field(default_factory=list)
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+
+
+@dataclass
 class UnderstoodQuery:
     """Kết quả hiểu truy vấn."""
 
-    effective_text: str                       # truy vấn dùng để truy hồi
+    lexical_text: str                                           # dùng cho BM25/lexical + phần sparse của hybrid
+    semantic_text: str                                          # dùng cho embedding (sạch, không pha loãng)
     corrections: dict[str, str] = field(default_factory=dict)  # token -> sửa thành
     expansions: list[str] = field(default_factory=list)        # token thêm vào
+    key_phrases: list[str] = field(default_factory=list)       # cụm từ quan trọng trong câu đã sửa
+    metadata: QueryMetadata = field(default_factory=QueryMetadata)
     rewritten: bool = False
 
 
@@ -127,13 +166,15 @@ class QueryUnderstander:
             )
         return self._corrector
 
-    def understand(self, parsed: ParsedQuery) -> UnderstoodQuery:
+    def understand(self, parsed: ParsedQuery, now: Optional[datetime] = None) -> UnderstoodQuery:
         """Sinh truy vấn hiệu dụng từ ParsedQuery theo các cờ đang bật."""
+        now = now or datetime.now(timezone.utc)
+
         # Ưu tiên gọi OpenAI API nếu có API key và bật các cờ tương ứng
         if self.settings.openai_api_key and (
             self.settings.qu_spellcorrect or self.settings.qu_expansion or self.settings.qu_llm_rewrite
         ):
-            llm_res = self._llm_understand(parsed.normalized)
+            llm_res = self._llm_understand(parsed.normalized, now)
             if llm_res is not None:
                 return llm_res
 
@@ -158,17 +199,24 @@ class QueryUnderstander:
                 for syn in self.synonyms[folded]:
                     expansions.append(syn)
 
-        effective = " ".join(out_tokens + expansions).strip() or parsed.normalized
+        semantic_text = " ".join(out_tokens).strip() or parsed.normalized
+        lexical_text = " ".join(out_tokens + expansions).strip() or parsed.normalized
         rewritten = False
         if self.settings.qu_llm_rewrite:
-            new_text = self._llm_rewrite(effective)
+            new_text = self._llm_rewrite(lexical_text)
             if new_text:
-                effective, rewritten = new_text, True
+                lexical_text = new_text
+                semantic_text = new_text
+                rewritten = True
 
-        return UnderstoodQuery(effective, corrections, expansions, rewritten)
+        return UnderstoodQuery(
+            lexical_text=lexical_text, semantic_text=semantic_text,
+            corrections=corrections, expansions=expansions, rewritten=rewritten,
+        )
 
-    def _llm_understand(self, text: str) -> Optional[UnderstoodQuery]:
-        """Sử dụng OpenAI để vừa sửa lỗi chính tả, vừa mở rộng truy vấn đồng nghĩa trong một API call."""
+    def _llm_understand(self, text: str, now: datetime) -> Optional[UnderstoodQuery]:
+        """Sử dụng OpenAI để sửa lỗi chính tả, mở rộng truy vấn, trích cụm từ khóa
+        và metadata (chủ đề/thực thể/khoảng ngày) trong một API call."""
         try:
             from openai import OpenAI
 
@@ -179,37 +227,48 @@ class QueryUnderstander:
 
             tasks = []
             if self.settings.qu_spellcorrect:
-                tasks.append("- Phát hiện và sửa lỗi chính tả/lỗi gõ phím tiếng Việt trong câu truy vấn (không tự ý thêm từ mới vào trường corrected_query).")
+                tasks.append("- Phát hiện và sửa lỗi chính tả, lỗi gõ phím tiếng Việt; chỉ sửa từ sai, giữ nguyên từ đã đúng.")
             if self.settings.qu_expansion:
-                tasks.append("- Tìm các từ đồng nghĩa hoặc viết tắt/thuật ngữ tương đương liên quan để mở rộng truy vấn tìm kiếm.")
+                tasks.append("- Đề xuất tối đa 5 từ hoặc cụm từ đồng nghĩa/viết tắt tương đương để mở rộng phạm vi tìm kiếm.")
             if self.settings.qu_llm_rewrite:
-                tasks.append("- Viết lại truy vấn cho rõ ràng, giữ nguyên ý định tìm kiếm ban đầu.")
+                tasks.append("- Viết lại truy vấn cho rõ ràng, mạch lạc hơn, giữ nguyên ý định tìm kiếm ban đầu.")
 
             if not tasks:
                 return None
 
+            tasks.append("- Trích xuất tối đa 5 cụm từ khóa quan trọng (từ 2 từ trở lên) có sẵn trong câu đã sửa — ưu tiên tên riêng, thuật ngữ chuyên ngành.")
+            tasks.append("- Nhận diện metadata nếu có: chủ đề/thể loại tin tức, thực thể (người/tổ chức/địa điểm), khoảng thời gian được nhắc đến.")
+
             prompt_instructions = "\n".join(tasks)
             system_prompt = (
-                "Bạn là một trợ lý tối ưu hóa truy vấn tìm kiếm tiếng Việt chuyên nghiệp.\n"
-                "Nhiệm vụ của bạn là nhận vào câu truy vấn từ người dùng và thực hiện các nhiệm vụ sau:\n"
+                "Bạn là trợ lý tối ưu hóa truy vấn tìm kiếm tin tức tiếng Việt.\n"
+                "Với câu truy vấn của người dùng, hãy thực hiện các nhiệm vụ sau:\n"
                 f"{prompt_instructions}\n\n"
-                "Trả về kết quả duy nhất dưới dạng một đối tượng JSON hợp lệ có cấu trúc chính xác như sau:\n"
+                f"Hôm nay là {now.date().isoformat()}. Dùng mốc này để quy đổi thời gian tương đối "
+                "(vd: \"hôm nay\", \"tuần trước\", \"tháng này\") sang ngày cụ thể.\n\n"
+                "Trả về DUY NHẤT một đối tượng JSON đúng cấu trúc sau, không giải thích thêm:\n"
                 "{\n"
-                "  \"corrected_query\": \"câu truy vấn sau khi đã được sửa lỗi chính tả\",\n"
+                "  \"corrected_query\": \"câu truy vấn sau khi sửa lỗi chính tả (giữ nguyên nếu không có lỗi)\",\n"
                 "  \"corrections\": {\"từ_gõ_sai\": \"từ_gõ_đúng\"},\n"
-                "  \"expansions\": [\"từ_đồng_nghĩa_1\", \"từ_đồng_nghĩa_2\"]\n"
+                "  \"key_phrases\": [\"cụm từ quan trọng trong câu đã sửa\"],\n"
+                "  \"expansions\": [\"từ/cụm đồng nghĩa hoặc viết tắt tương đương\"],\n"
+                "  \"metadata\": {\n"
+                "    \"category\": \"chủ đề tin tức nếu rõ ràng, null nếu không chắc\",\n"
+                "    \"entities\": [\"tên người/tổ chức/địa điểm được nhắc đến\"],\n"
+                "    \"date_from\": \"YYYY-MM-DD hoặc null\",\n"
+                "    \"date_to\": \"YYYY-MM-DD hoặc null\"\n"
+                "  }\n"
                 "}\n"
-                "Lưu ý: Nếu không bật tính năng nào tương ứng, hãy để trường giá trị rỗng/mảng rỗng. Chỉ trả về duy nhất chuỗi JSON hợp lệ, không giải thích gì thêm."
+                "Trường không áp dụng để trống (\"\", [], null) — không bịa dữ liệu."
             )
 
-            # Sử dụng gpt-4o-mini thay vì gpt-4.1-mini để chạy thực tế chính xác
             resp = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text},
                 ],
-                max_tokens=256,
+                max_tokens=384,
                 temperature=0.0,
                 response_format={"type": "json_object"}
             )
@@ -217,22 +276,30 @@ class QueryUnderstander:
             res_content = (resp.choices[0].message.content or "").strip()
             data = json.loads(res_content)
 
-            corrected_query = data.get("corrected_query", text)
-            corrections = data.get("corrections", {})
-            expansions = data.get("expansions", [])
+            corrected_query = (data.get("corrected_query") or text).strip()
+            corrections = data.get("corrections") or {}
+            key_phrases = [p for p in (data.get("key_phrases") or []) if p]
+            expansions = [e for e in (data.get("expansions") or []) if e]
+            meta_raw = data.get("metadata") or {}
 
-            # Tạo effective_text kết hợp corrected_query và các synonym expansions
-            effective = corrected_query
-            if expansions:
-                unique_expansions = [syn for syn in expansions if syn.lower() not in effective.lower()]
-                if unique_expansions:
-                    effective = f"{effective} {' '.join(unique_expansions)}"
+            semantic_text = corrected_query
+            lexical_text = _dedup_merge(_dedup_merge(semantic_text, key_phrases), expansions)
+
+            metadata = QueryMetadata(
+                category=meta_raw.get("category") or None,
+                entities=[e for e in (meta_raw.get("entities") or []) if e],
+                date_from=_parse_date_bound(meta_raw.get("date_from"), now, end_of_day=False),
+                date_to=_parse_date_bound(meta_raw.get("date_to"), now, end_of_day=True),
+            )
 
             return UnderstoodQuery(
-                effective_text=effective.strip(),
+                lexical_text=lexical_text,
+                semantic_text=semantic_text,
                 corrections=corrections,
                 expansions=expansions,
-                rewritten=True
+                key_phrases=key_phrases,
+                metadata=metadata,
+                rewritten=True,
             )
         except Exception as e:
             _log.error(f"Lỗi gọi OpenAI cho Query Understanding: {e}")

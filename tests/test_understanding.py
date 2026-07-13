@@ -78,7 +78,7 @@ def test_understander_spellcorrect():
     assert u.enabled
     out = u.understand(parse_query("lam phatt"))
     assert out.corrections.get("phatt") == "phat"
-    assert "phat" in out.effective_text
+    assert "phat" in out.semantic_text
 
 
 def test_understander_expansion():
@@ -104,18 +104,22 @@ def test_understander_llm_understand_success(monkeypatch):
     payload = json.dumps({
         "corrected_query": "lam phat",
         "corrections": {"phatt": "phat"},
+        "key_phrases": ["lam phat"],
         "expansions": ["gia ca"],
+        "metadata": {},
     })
     _inject_fake_openai(monkeypatch, payload)
     u = QueryUnderstander(
         Settings(openai_api_key="sk-test", qu_spellcorrect=True, qu_expansion=True),
         vocab_provider=lambda: {},
     )
-    out = u.understand(parse_query("lam phatt"))
+    out = u.understand(parse_query("lam phatt"), now=NOW)
     assert out.corrections == {"phatt": "phat"}
     assert out.expansions == ["gia ca"]
-    assert "lam phat" in out.effective_text
-    assert "gia ca" in out.effective_text
+    assert out.key_phrases == ["lam phat"]
+    assert out.semantic_text == "lam phat"          # sạch, KHÔNG chứa expansion
+    assert "gia ca" in out.lexical_text              # lexical_text CÓ chứa expansion
+    assert "lam phat" in out.lexical_text
 
 
 def test_understander_llm_understand_error_falls_back(monkeypatch):
@@ -139,3 +143,54 @@ def test_understander_no_key_skips_llm(monkeypatch):
     out = u.understand(parse_query("lam phatt"))
     assert init_calls == []  # OpenAI() không được khởi tạo khi thiếu key
     assert out.corrections.get("phatt") == "phat"  # vẫn dùng local fallback
+
+
+def test_understander_llm_metadata_date_range(monkeypatch):
+    payload = json.dumps({
+        "corrected_query": "tin hom nay",
+        "metadata": {"date_from": "2026-07-06", "date_to": "2026-07-06"},
+    })
+    _inject_fake_openai(monkeypatch, payload)
+    u = QueryUnderstander(
+        Settings(openai_api_key="sk-test", qu_spellcorrect=True),
+        vocab_provider=lambda: {},
+    )
+    out = u.understand(parse_query("tin hom nay"), now=NOW)
+    assert out.metadata.date_from == datetime(2026, 7, 6, 0, 0, tzinfo=NOW.tzinfo)
+    assert out.metadata.date_to == datetime(2026, 7, 6, 23, 59, 59, 999999, tzinfo=NOW.tzinfo)
+
+
+def test_understander_llm_malformed_date_degrades(monkeypatch):
+    payload = json.dumps({
+        "corrected_query": "lam phat",
+        "corrections": {"phatt": "phat"},
+        "metadata": {"date_from": "not-a-date"},
+    })
+    _inject_fake_openai(monkeypatch, payload)
+    u = QueryUnderstander(
+        Settings(openai_api_key="sk-test", qu_spellcorrect=True),
+        vocab_provider=lambda: {},
+    )
+    out = u.understand(parse_query("lam phatt"), now=NOW)
+    # Ngày hỏng -> None, nhưng phần còn lại của kết quả LLM vẫn giữ nguyên
+    assert out.metadata.date_from is None
+    assert out.corrections == {"phatt": "phat"}
+    assert out.semantic_text == "lam phat"
+
+
+def test_understander_llm_category_entities_informational_only(monkeypatch):
+    payload = json.dumps({
+        "corrected_query": "lam phat thang 6",
+        "metadata": {"category": "kinh te", "entities": ["Ngan hang Nha nuoc"]},
+    })
+    _inject_fake_openai(monkeypatch, payload)
+    u = QueryUnderstander(
+        Settings(openai_api_key="sk-test", qu_spellcorrect=True),
+        vocab_provider=lambda: {},
+    )
+    out = u.understand(parse_query("lam phat thang 6"), now=NOW)
+    assert out.metadata.category == "kinh te"
+    assert out.metadata.entities == ["Ngan hang Nha nuoc"]
+    # category/entities KHÔNG rò rỉ vào lexical_text/semantic_text
+    assert "kinh te" not in out.lexical_text
+    assert "Ngan hang Nha nuoc" not in out.lexical_text
