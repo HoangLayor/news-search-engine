@@ -86,7 +86,7 @@ def make_snippet(body: str, query_tokens: list[str], max_len: int = 200) -> str:
 
     # Ghép snippet, chèn <b>...</b> quanh match nằm TRỌN trong cửa sổ
     parts: list[str] = []
-    cursor = win_start
+    cursor = win_start        
     for start, end in matches:
         if start < win_start or end > win_end:
             continue

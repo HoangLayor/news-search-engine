@@ -1,0 +1,7 @@
+{
+  "timestamp": "2026-07-13T12:16:33Z",
+  "changed_file": "news_search/search/pipeline.py",
+  "test_command": "pytest -v",
+  "related_test": "",
+  "recommendation": "テストの実行を推奨します"
+}

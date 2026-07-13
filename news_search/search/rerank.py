@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import torch
 from typing import Protocol, runtime_checkable
 
 from news_search.config import Settings
@@ -41,6 +42,7 @@ class BGEReranker:
     """Cross-encoder BGE qua FlagEmbedding; thiếu package -> RuntimeError khi khởi tạo."""
 
     def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3") -> None:
+        torch.set_num_threads(1)
         try:  # import guard: FlagEmbedding là thư viện nặng, tùy chọn
             from FlagEmbedding import FlagReranker  # type: ignore[import-not-found]
         except ImportError as exc:
@@ -80,6 +82,7 @@ class VietnameseReranker:
     """
 
     def __init__(self, model_name: str = "AITeamVN/Vietnamese_Reranker") -> None:
+        torch.set_num_threads(1)
         self.model_name = model_name
         self._backend = ""
         self._model = None

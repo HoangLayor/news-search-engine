@@ -20,6 +20,7 @@ import unicodedata
 import zlib
 from typing import Protocol
 
+import torch
 import numpy as np
 
 from news_search.config import Settings
@@ -144,6 +145,7 @@ class BGEEmbedder:
 
     def __init__(self, model_name: str = "BAAI/bge-m3", dim: int = 1024,
                  device: str = "") -> None:
+        torch.set_num_threads(1)
         self.dim = dim
         self.model_name = model_name
         self._backend = ""
@@ -178,17 +180,23 @@ class BGEEmbedder:
         """Vector hóa -> (n, dim) float32, L2-normalized."""
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
+        
+        # Mã hóa từng câu một để tránh deadlock OpenMP trong thread pool khi xử lý lô
+        embeddings = []
         if self._backend == "flagembedding":
-            dense = self._model.encode(texts, return_dense=True)["dense_vecs"]
-            arr = np.asarray(dense, dtype=np.float32)
+            for text in texts:
+                dense = self._model.encode([text], return_dense=True)["dense_vecs"][0]
+                embeddings.append(dense)
         else:  # sentence-transformers
-            arr = np.asarray(
-                self._model.encode(texts, normalize_embeddings=True, convert_to_numpy=True),
-                dtype=np.float32,
-            )
+            for text in texts:
+                dense = self._model.encode([text], normalize_embeddings=True, convert_to_numpy=True)[0]
+                embeddings.append(dense)
+                
+        arr = np.asarray(embeddings, dtype=np.float32)
         norms = np.linalg.norm(arr, axis=1, keepdims=True)
         np.divide(arr, norms, out=arr, where=norms > 0)  # zero-safe, đảm bảo đã chuẩn hóa
         return arr
+
 
 
 class VietnameseEmbedder:
@@ -202,6 +210,8 @@ class VietnameseEmbedder:
 
     def __init__(self, model_name: str = "AITeamVN/Vietnamese_Embedding",
                  dim: int = 1024, device: str = "") -> None:
+        import torch
+        torch.set_num_threads(1)
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
         except ImportError as exc:  # pragma: no cover - phụ thuộc môi trường
@@ -216,13 +226,18 @@ class VietnameseEmbedder:
     def embed(self, texts: list[str]) -> np.ndarray:  # pragma: no cover - cần model nặng
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
-        arr = np.asarray(
-            self._model.encode(texts, normalize_embeddings=True, convert_to_numpy=True),
-            dtype=np.float32,
-        )
+        
+        # Mã hóa từng câu một để tránh deadlock OpenMP trong thread pool khi xử lý lô
+        embeddings = []
+        for text in texts:
+            dense = self._model.encode([text], normalize_embeddings=True, convert_to_numpy=True)[0]
+            embeddings.append(dense)
+            
+        arr = np.asarray(embeddings, dtype=np.float32)
         norms = np.linalg.norm(arr, axis=1, keepdims=True)
         np.divide(arr, norms, out=arr, where=norms > 0)
         return arr
+
 
 
 def get_embedder(settings: Settings) -> Embedder:

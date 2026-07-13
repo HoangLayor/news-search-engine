@@ -28,12 +28,12 @@ _log = logging.getLogger(__name__)
 class SearchService:
     """Bọc manager+pipeline, hỗ trợ hoán đổi chỉ mục an toàn + metrics + feedback."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, lazy_init: bool = False) -> None:
         self.settings = settings
         self.metrics = MetricsCollector() if settings.metrics_enabled else None
         self.events = get_event_logger(settings)
         self._lock = Lock()
-        self.manager = IndexManager(settings, lazy_init=True)
+        self.manager = IndexManager(settings, lazy_init=lazy_init)
         self.pipeline = None
         self._state_file = Path("data/reindex_progress.json")
         self._state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +49,15 @@ class SearchService:
                 "elapsed_seconds": 0.0,
                 "speed": 0.0
             })
+        else:
+            state = self._read_reindex_state()
+            if state.get("status") == "indexing":
+                state["status"] = "failed"
+                state["error_msg"] = "Tiến trình bị gián đoạn do hệ thống khởi động lại."
+                self._write_reindex_state(state)
+
+        if not lazy_init:
+            self.load_resources()
 
     def is_ready(self) -> bool:
         """Kiểm tra xem hệ thống đã nạp xong các model AI chưa."""

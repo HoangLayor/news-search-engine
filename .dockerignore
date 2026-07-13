@@ -29,3 +29,4 @@ scripts/
 .ipynb_checkpoints/
 .vscode/
 .idea/
+data/reindex_progress*

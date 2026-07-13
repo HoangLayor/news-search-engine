@@ -86,7 +86,7 @@ async def background_init(app: FastAPI, settings: Settings):
     try:
         # Tải mô hình ngầm
         await loop.run_in_executor(None, svc.load_resources)
-        
+
         # Tự nạp bài mẫu sau khi mô hình đã sẵn sàng (chạy ở thread riêng để không block API)
         await loop.run_in_executor(None, _autoload, svc, settings)
     except Exception as exc:
@@ -96,14 +96,18 @@ async def background_init(app: FastAPI, settings: Settings):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = app.state.settings
-    asyncio.create_task(background_init(app, settings))
+    if not app.state.service.is_ready():
+        asyncio.create_task(background_init(app, settings))
     yield
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, lazy_init: bool = False) -> FastAPI:
     """Tạo FastAPI app; dùng SearchService (hỗ trợ reindex blue-green + metrics + feedback)."""
     settings = settings or Settings.from_env()
-    svc = SearchService(settings)
+    svc = SearchService(settings, lazy_init=lazy_init)
+
+    if not lazy_init:
+        _autoload(svc, settings)
 
     app = FastAPI(title="News Search Engine", version="0.2.0", lifespan=lifespan)
     app.state.service = svc
@@ -302,13 +306,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # So sánh constant-time -> tránh rò rỉ token qua kênh thời gian
         if not hmac.compare_digest(x_admin_token, settings.admin_token):
             raise HTTPException(status_code=403, detail="token admin không đúng")
-            
+
         if svc.reindex_progress["status"] == "indexing":
             raise HTTPException(status_code=409, detail="Một tiến trình reindex khác đang chạy ngầm, vui lòng đợi.")
 
         limit = payload.get("limit")
         limit_val = int(limit) if limit else None
-        
+
         # Đẩy quá trình reindex vào hàng đợi BackgroundTasks của FastAPI
         background_tasks.add_task(svc.reindex, limit=limit_val)
         return {"status": "started"}
@@ -324,6 +328,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not hmac.compare_digest(x_admin_token, settings.admin_token):
             raise HTTPException(status_code=403, detail="token admin không đúng")
         return svc.reindex_progress
+
+
 
     @app.get("/healthz")
     def healthz() -> dict:
@@ -392,6 +398,6 @@ def __getattr__(name: str):
     global _app
     if name == "app":
         if _app is None:
-            _app = create_app()
+            _app = create_app(lazy_init=True)
         return _app
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

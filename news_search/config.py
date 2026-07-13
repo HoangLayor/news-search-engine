@@ -9,6 +9,17 @@ from __future__ import annotations
 
 import os
 
+# Thiết lập giới hạn thread cho các thư viện tuyến tính để tránh deadlock OpenMP trong worker threads
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
+os.environ["KMP_BLOCKTIME"] = "0"
+os.environ["KMP_AFFINITY"] = "disabled"
+
+
 # Lấy đường dẫn gốc của dự án (news-search-engine)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
